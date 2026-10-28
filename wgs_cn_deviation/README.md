@@ -8,7 +8,7 @@ Requested by Piotr (2026-10-27). Built on `tx_data` canonical tables (PR #2):
 
 | table | used for |
 |---|---|
-| `wgs_consensus_segments` | MSAI-adjusted fractional allele-specific CN, consensus segments |
+| `wgs_consensus_segments` | fractional allele-specific CN: MSAI-adjusted consensus segments; single-sample tumours use the NOT_adjusted file (`msai_adjusted` column) |
 | `wgs_tree_clones` | single-clone = `n_clones_tree == 1` (clones on the ALPACA tree) |
 | `wgs_battenberg_inventory` | purity, ploidy, coverage per sample |
 

@@ -92,6 +92,8 @@ def per_sample(seg: pl.DataFrame) -> pl.DataFrame:
     summ = seg.group_by("tumour_id", "sample").agg(
         pl.col("patient_id").first(),
         pl.col("purity").first(), pl.col("ploidy").first(), pl.col("coverage").first(),
+        (pl.col("msai_adjusted").first() if "msai_adjusted" in seg.columns
+         else pl.lit(None, pl.Boolean)).alias("msai_adjusted"),
         pl.len().alias("n_segments"),
         pl.col("bp").sum().alias("genome_bp"),
         _wmean("dev").alias("dev_mean"),
@@ -147,6 +149,7 @@ def per_tumour(samples: pl.DataFrame) -> pl.DataFrame:
     """One row per tumour (mean over its samples), to avoid counting multi-region tumours twice."""
     return samples.group_by("tumour_id").agg(
         pl.len().alias("n_samples"),
+        pl.col("msai_adjusted").first(),
         *[pl.col(c).mean() for c in ("purity", "ploidy", "coverage", "dev_mean", "dev_major",
                                      "dev_minor", f"frac_genome_dev_gt_{HIGH_DEV}",
                                      "scale_slope", "scale_intercept")],

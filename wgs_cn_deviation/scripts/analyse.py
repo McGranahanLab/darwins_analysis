@@ -160,13 +160,16 @@ def main() -> None:
     ]
     if missing_purity:
         md.append(f"- Samples without inventory purity (dropped from correlations): {missing_purity[:10]}")
+    md.append(f"- MSAI-adjusted segments: {tumours['msai_adjusted'].sum()} tumours; "
+              f"NOT_adjusted (single-sample, adjustment can't run): "
+              f"{(~tumours['msai_adjusted']).sum()}.")
     if no_seg:
         md.append(f"- Single-clone tumours without segments (not analysed): {len(no_seg)}: {no_seg}")
     md += ["", "## Across tumours (one row per tumour, Spearman, permutation p)", "", _md(corr), "",
            "![](fig1_deviation_vs_purity.png)", "",
            "## Tumours, highest deviation first", "",
            _md(tumours.sort("dev_mean", descending=True).select(
-               "tumour_id", "n_samples", "purity", "ploidy", "coverage", "dev_mean",
+               "tumour_id", "n_samples", "msai_adjusted", "purity", "ploidy", "coverage", "dev_mean",
                "dev_major", "dev_minor", f"frac_genome_dev_gt_{d.HIGH_DEV}",
                "scale_slope", "scale_intercept"), n=25), "",
            "`scale_slope`/`scale_intercept`: fit of observed CN on its nearest integer. Values away "

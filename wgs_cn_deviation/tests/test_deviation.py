@@ -15,7 +15,7 @@ def _seg(cn_major, cn_minor, sample="S1", tumour="T1", purity=0.5, chrs=None, st
         "tumour_id": tumour, "patient_id": "P1", "sample": sample, "chr": chrs,
         "start": starts, "end": [s + 9_999_999 for s in starts],
         "bp": [10_000_000] * n, "cn_major": cn_major, "cn_minor": cn_minor,
-        "purity": purity, "ploidy": 2.0, "coverage": 100.0,
+        "purity": purity, "ploidy": 2.0, "coverage": 100.0, "msai_adjusted": False,
     }))
 
 
