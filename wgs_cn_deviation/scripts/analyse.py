@@ -112,8 +112,13 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     seg, meta, clones = d.load(a.tx_data_dir, a.include_x, a.min_seg_bp)
+    single = clones.filter(pl.col("n_clones_tree") == 1)["tumour_id"]
+    no_seg = sorted(set(single) - set(seg["tumour_id"].unique()))
+    if no_seg:
+        print(f"warning: {len(no_seg)}/{single.len()} single-clone tumour(s) have no rows in "
+              f"wgs_consensus_segments (check the tx_data build log): {no_seg}", file=sys.stderr)
     if seg.is_empty():
-        sys.exit("no segments for single-clone tumours: check wgs_tree_clones / wgs_consensus_segments")
+        sys.exit(f"no segments for any of the {single.len()} single-clone tumours on the tree")
     missing_purity = seg.filter(pl.col("purity").is_null())["sample"].unique().to_list()
     seg = d.add_deviation(seg)
 
@@ -155,6 +160,8 @@ def main() -> None:
     ]
     if missing_purity:
         md.append(f"- Samples without inventory purity (dropped from correlations): {missing_purity[:10]}")
+    if no_seg:
+        md.append(f"- Single-clone tumours without segments (not analysed): {len(no_seg)}: {no_seg}")
     md += ["", "## Across tumours (one row per tumour, Spearman, permutation p)", "", _md(corr), "",
            "![](fig1_deviation_vs_purity.png)", "",
            "## Tumours, highest deviation first", "",
