@@ -47,7 +47,8 @@ pixi run python scripts/analyse.py --tx-data-dir /path/to/tx_data/data --out out
 pixi run test
 ```
 
-Outputs: `summary.md`, CSV tables, `fig1`-`fig4` PNGs, `run.json`
+Outputs: `summary.md`, CSV tables, `fig1`-`fig4` PNGs, per-sample raw CN
+profiles (`fig5_cn_profiles.pdf` + `fig5_cn_profiles/*.png`), `run.json`
 (commits + options).
 
 ## Caveats

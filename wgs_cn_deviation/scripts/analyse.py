@@ -20,6 +20,8 @@ import sys
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
 import numpy as np  # noqa: E402
 import polars as pl  # noqa: E402
 
@@ -88,6 +90,62 @@ def figures(out, samples, tumours, state, pieces, seg):
     fig.tight_layout(); fig.savefig(out / "fig4_signed_fraction.png", dpi=150); plt.close(fig)
 
 
+def cn_profiles(out, seg, y_max: float = 8.0):
+    """Raw CN along the genome: one figure per (tumour, sample), one panel per allele.
+
+    Segments with |CN - nearest integer| > HIGH_DEV are red. Values above
+    y_max are drawn at y_max with a triangle. Samples ordered by purity.
+    Writes fig5_cn_profiles/<tumour>__<sample>.png and all pages in
+    fig5_cn_profiles.pdf.
+    """
+    pdir = out / "fig5_cn_profiles"
+    pdir.mkdir(exist_ok=True)
+    chrs = sorted(seg["chr"].unique(), key=lambda c: d.CHR_ORDER.get(c, 99))
+    ends = dict(seg.group_by("chr").agg(pl.col("end").max()).rows())
+    off, x0 = {}, 0
+    for c in chrs:
+        off[c] = x0; x0 += ends[c]
+    order = (seg.group_by("tumour_id", "sample")
+             .agg(pl.col("purity").first(), pl.col("ploidy").first(),
+                  pl.col("msai_adjusted").first() if "msai_adjusted" in seg.columns
+                  else pl.lit(None).alias("msai_adjusted"))
+             .sort("purity", "tumour_id", "sample", nulls_last=True))
+    legend = [Line2D([], [], c="C0", lw=2, label=f"|CN - integer| <= {d.HIGH_DEV}"),
+              Line2D([], [], c="C3", lw=2, label=f"|CN - integer| > {d.HIGH_DEV}")]
+    with PdfPages(out / "fig5_cn_profiles.pdf") as pdf:
+        for r in order.iter_rows(named=True):
+            g = seg.filter((pl.col("tumour_id") == r["tumour_id"]) & (pl.col("sample") == r["sample"]))
+            fig, axes = plt.subplots(2, 1, figsize=(12, 4.5), sharex=True)
+            for ax, allele in zip(axes, d.ALLELES):
+                for row in g.select("chr", "start", "end", f"cn_{allele}", f"dev_{allele}").iter_rows():
+                    c, a, b, cn, dev = row
+                    xa, xb = off[c] + a, off[c] + b
+                    col = "C3" if dev > d.HIGH_DEV else "C0"
+                    ax.plot([xa, xb], [min(cn, y_max)] * 2, c=col, lw=2, solid_capstyle="butt")
+                    if cn > y_max:
+                        ax.plot((xa + xb) / 2, y_max, marker="^", c=col, ms=4)
+                top = min(y_max, max(3.0, np.ceil(g[f"cn_{allele}"].max() or 0) + 0.5))
+                for k in range(int(top) + 1):
+                    ax.axhline(k, c="lightgrey", lw=0.5, ls=":", zorder=0)
+                for c in chrs[1:]:
+                    ax.axvline(off[c], c="lightgrey", lw=0.5, zorder=0)
+                ax.set_ylim(-0.2, top + 0.2)
+                ax.set_ylabel(f"{allele} CN")
+            axes[-1].set_xticks([off[c] + ends[c] / 2 for c in chrs], chrs, fontsize=7)
+            axes[-1].set_xlim(0, x0)
+            adj = {True: "MSAI-adjusted", False: "MSAI not adjusted"}.get(r["msai_adjusted"], "")
+            pur = "NA" if r["purity"] is None else f"{r['purity']:.2f}"
+            plo = "NA" if r["ploidy"] is None else f"{r['ploidy']:.2f}"
+            fig.suptitle(f"{r['tumour_id']}  |  {r['sample']}  |  purity {pur}  |  ploidy {plo}  |  {adj}",
+                         fontsize=10)
+            axes[0].legend(handles=legend, fontsize=7, loc="upper right", ncol=2, framealpha=0.9)
+            fig.tight_layout()
+            fig.savefig(pdir / f"{r['tumour_id']}__{r['sample']}.png".replace("/", "_"), dpi=120)
+            pdf.savefig(fig)
+            plt.close(fig)
+    return order.height
+
+
 def _md(df: pl.DataFrame, n: int = 15, digits: int = 3) -> str:
     df = df.head(n).with_columns(pl.col(pl.Float64).round(digits))
     cols = df.columns
@@ -138,6 +196,7 @@ def main() -> None:
                      ("region_concordance", conc)):
         df.with_columns(pl.col(pl.Categorical).cast(pl.String)).write_csv(out / f"{name}.csv")
     figures(out, samples, tumours, state, pieces, seg)
+    n_profiles = cn_profiles(out, seg)
 
     n_all = clones.height
     n_single = clones.filter(pl.col("n_clones_tree") == 1).height
@@ -186,7 +245,11 @@ def main() -> None:
            "![](fig3_recurrent_regions.png)", "",
            "### Multi-region single-clone tumours: region-to-region concordance", "",
            _md(conc) if conc.height else "No multi-region single-clone tumours.", "",
-           "### Signed fractional part", "", "![](fig4_signed_fraction.png)", ""]
+           "### Signed fractional part", "", "![](fig4_signed_fraction.png)", "",
+           "## Raw copy-number profiles", "",
+           f"{n_profiles} samples, ordered by purity: `fig5_cn_profiles.pdf` (one page each) and "
+           f"`fig5_cn_profiles/<tumour>__<sample>.png`. Red = |CN - nearest integer| > {d.HIGH_DEV}; "
+           "dotted lines = integers; triangles = CN above the axis limit (8).", ""]
     (out / "summary.md").write_text("\n".join(md))
     print(f"wrote {out}")
 
