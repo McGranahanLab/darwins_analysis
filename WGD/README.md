@@ -64,6 +64,10 @@ Step 02 output (`output/<name>/02_pruned/`):
 Matching regions across sources uses the sample stem (`LTX0001_SU_T1-R1`),
 not the hash suffix.
 
+## Docs
+
+- [`docs/previous_analysis_logic.md`](docs/previous_analysis_logic.md): the logic of the previous consolidation (`templates/previous_analysis.ipynb`) as a pipeline, with problems and open decisions.
+
 ## Caveats
 
 - PGDD groups clusters into events with `grepl(cluster, gd_clusters)`
