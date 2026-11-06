@@ -1,0 +1,24 @@
+{
+  "pgdd_dir": "../../tx_data/nemo_mock/project/proj-tracerx-lung/tctProjects/lungTx/Tx842/release/tracerx_842/WGD/release_tx842/pgdd",
+  "settings": {
+    "n_boot": 500,
+    "seed": 1,
+    "stability_threshold": 0.7,
+    "stability_alpha": 0.05,
+    "stability_use_binom_test": true,
+    "stability_adjust_method": "BH",
+    "bootstrap_unit": "tumour_id x sample_id x cluster_id",
+    "phase": "discovery_only",
+    "check_phase_requires_stable_anchor_in_cluster": true
+  },
+  "summary": {
+    "tumours": 11,
+    "regions": 30,
+    "events": 11,
+    "clonal_events": 4,
+    "subclonal_events": 7,
+    "subclonal_mut_supported": 7,
+    "multi_cluster_events": 1,
+    "event_cluster_rows": 8
+  }
+}
