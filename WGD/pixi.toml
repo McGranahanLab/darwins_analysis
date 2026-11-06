@@ -14,4 +14,5 @@ pytest = ">=8.0"
 
 [tasks]
 parse_pgdd = "python scripts/01_parse_pgdd.py"
+prune_tree = "python scripts/02_prune_tree.py"
 test    = "pytest tests/ -q"
