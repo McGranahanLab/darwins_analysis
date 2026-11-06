@@ -1,0 +1,18 @@
+[workspace]
+name = "wgs_cn_deviation"
+version = "0.1.0"
+description = "TRACERx WGS: deviation of fractional copy number from the nearest integer in single-clone tumours"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+
+[dependencies]
+python = "3.11.*"
+polars = ">=1.0"
+pyarrow = ">=15.0"
+numpy = ">=1.26"
+matplotlib-base = ">=3.8"
+pytest = ">=8.0"
+
+[tasks]
+analyse = "python scripts/analyse.py"
+test    = "pytest tests/ -q"
