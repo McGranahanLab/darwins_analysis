@@ -71,8 +71,7 @@ def inputs(tmp_path):
     conipher, msai = tmp_path / "conipher", tmp_path / "msai"
     _write_tumour(conipher, msai, "LTX0901_1", seed=1)
     _write_tumour(conipher, msai, "LTX0902_1", seed=2)
-    _write_tumour(conipher, msai, "LTX0903_1", tree="# tree 1\n1\t2\n")                       # single cluster tree
-    _write_tumour(conipher, msai, "LTX0904_1", cn_samples=[_sample("LTX0904_1", 1)])          # CN missing R2
+    _write_tumour(conipher, msai, "LTX0903_1", tree="### 1 trees\n# tree 1\n1\t1\n")  # single clone (CONIPHER format)
     return conipher, msai
 
 
@@ -81,9 +80,8 @@ def test_prepare(inputs):
     t = res.table
     assert t.columns == list(pgdd_input.OUTPUT_COLS)
     assert sorted(t["tumour_id"].unique()) == ["LTX0901-Tumour1", "LTX0902-Tumour1"]
-    assert set(res.skipped) == {"LTX0903_1", "LTX0904_1"}
-    assert "single cluster" in res.skipped["LTX0903_1"]
-    assert "SAMPLE ids differ" in res.skipped["LTX0904_1"]
+    assert res.skipped == {}
+    assert res.single_clone["tumour_id"].unique().to_list() == ["LTX0903-Tumour1"]
     # cluster 5 is not in treeTable; cluster 6 is not an edge of the tree
     assert set(t["cluster_id"].unique()) == {1, 2, 3}
     assert t.filter(pl.col("is_clonal_cluster"))["cluster_id"].unique().to_list() == [1]
@@ -121,6 +119,39 @@ def test_default_tree_only(tmp_path):
     assert pgdd_input.clonal_cluster(edges) == 1
 
 
+def test_single_clone(inputs):
+    res = pgdd_input.prepare_all(*inputs, log=lambda *_: None)
+    sc = res.single_clone
+    assert sc.columns == list(pgdd_input.SINGLE_CLONE_SCHEMA)
+    assert sc["clone"].unique().to_list() == ["clone1"]
+    assert dict(zip(sc["sample_id"], sc["num_gds"])) == {_sample("LTX0903_1", 1): 1, _sample("LTX0903_1", 2): 0}
+    ev = pgdd_input.single_clone_events(sc).row(0, named=True)
+    assert ev["tumour_id"] == "LTX0903-Tumour1" and ev["clone"] == "clone1"
+    assert ev["n_clonal_gds"] == 1 and ev["num_gds_discordant"]  # synthetic R2 is not doubled
+
+
+def test_one_edge_two_clone_tree_goes_to_pgdd(tmp_path):
+    conipher, msai = tmp_path / "conipher", tmp_path / "msai"
+    _write_tumour(conipher, msai, "LTX0905_1", tree="### 1 trees\n# tree 1\n1\t2\n")
+    res = pgdd_input.prepare_all(conipher, msai, log=lambda *_: None)
+    assert res.single_clone.is_empty()
+    assert set(res.table["cluster_id"].unique()) == {1, 2}
+
+
+def test_sample_mismatch_fails_before_processing(inputs, monkeypatch):
+    conipher, msai = inputs
+    _write_tumour(conipher, msai, "LTX0904_1", cn_samples=[_sample("LTX0904_1", 1)])  # CN missing R2
+    _write_tumour(conipher, msai, "LTX0906_1")
+    (conipher / "LTX0906_1" / "treeTable.tsv").write_text(
+        "SAMPLE\tmutation_id\ttreeCLUSTER\nLTX0906_SU_T1-R9--x\t:1:1:C:T\t1\n")
+    called = []
+    monkeypatch.setattr(pgdd_input, "prepare_tumour", lambda *a, **k: called.append(a))
+    with pytest.raises(pgdd_input.SampleMismatchError) as e:
+        pgdd_input.prepare_all(conipher, msai, log=lambda *_: None)
+    assert "LTX0904_1" in str(e.value) and "LTX0906_1" in str(e.value) and "2 tumour(s)" in str(e.value)
+    assert called == []
+
+
 def test_summary(inputs, tmp_path):
     t = pgdd_input.prepare_all(*inputs, log=lambda *_: None).table
     samples = t.select("sample_id", "tumour_id").unique().sort("sample_id")
@@ -128,11 +159,23 @@ def test_summary(inputs, tmp_path):
     s = summary.cohort_summary(t, regions)
     assert s.columns == list(summary.COLUMNS)
     assert s.height == samples.height
+    assert s["source"].unique().to_list() == ["pgdd"]
     assert s["tumour_id"].null_count() == 0  # 4th sample is not in regions: tumour_id from the input
     got = dict(zip(s["sample_name_hash"], s["Second GD predicted"]))
     assert [got[x] for x in regions["sample_id"]] == [1, 0, 0]
     r1 = s.filter(pl.col("sample_name_hash") == _sample("LTX0901_1", 1)).row(0, named=True)
     assert r1["genome_frac_nMaj2"] == pytest.approx(0.9, abs=1e-3) and r1["Ploidy"] == 3.1
+
+
+def test_summary_single_clone(inputs):
+    res = pgdd_input.prepare_all(*inputs, log=lambda *_: None)
+    regions = res.table.select("sample_id", "tumour_id").unique().with_columns(pl.lit(0).alias("num_gds"))
+    s = summary.cohort_summary(res.table, regions, res.single_clone)
+    sc = s.filter(pl.col("source") == "single_clone")
+    assert sc["tumour_id"].unique().to_list() == ["LTX0903-Tumour1"]
+    assert dict(zip(sc["sample_name_hash"], sc["GD predicted"])) == {_sample("LTX0903_1", 1): 1,
+                                                                     _sample("LTX0903_1", 2): 0}
+    assert sc["genome_frac_nMaj2"].null_count() == 0
 
 
 def _assert_same(r: pl.DataFrame, py: pl.DataFrame) -> None:
@@ -170,6 +213,6 @@ def test_parity_with_r(inputs, tmp_path):
     subprocess.run([*_rscript(), str(SCRIPTS / "03_generate_summary.R"), str(r_out / "pgdd_input_all_tumours.tsv"),
                     str(tmp_path / "regions.tsv"), str(r_out)], check=True, capture_output=True)
     rs = summary.read_tsv(r_out / "pgdd_cohort_gd_summary.tsv").sort("sample_name_hash")
-    ps = summary.cohort_summary(py, regions).sort("sample_name_hash")
+    ps = summary.cohort_summary(py, regions).sort("sample_name_hash").drop("source")  # R has no source column
     assert rs.columns == ps.columns
     _assert_same(rs, ps)

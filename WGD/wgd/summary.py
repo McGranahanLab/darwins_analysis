@@ -12,6 +12,9 @@ per-region calls (`pgdd_GDs_per_region.tsv`):
                         nMaj2 is the doubled-genome fraction
   num_gds               ploidy-based GD count from the CN segments (step 00)
   tumour_id
+  source                pgdd, or single_clone (GD predicted = num_gds; not run through PGDD)
+
+Single-clone tumours (step 00, `single_clone_samples.tsv`) are added when given.
 
 Differences from the R script: `tumour_id` falls back to the PGDD input for
 samples missing from the regions table, and rows are sorted by tumour and sample.
@@ -31,7 +34,7 @@ SAMPLE_CN = {  # summary column <- PGDD input column
     "num_gds": "num_gds",
 }
 COLUMNS = ("sample_name_hash", "GD predicted", "Second GD predicted", "Ploidy",
-           "genome_frac_nMaj2", "genome_frac_nMaj3", "genome_frac_nMaj4", "num_gds", "tumour_id")
+           "genome_frac_nMaj2", "genome_frac_nMaj3", "genome_frac_nMaj4", "num_gds", "tumour_id", "source")
 
 
 def read_tsv(path: Path) -> pl.DataFrame:
@@ -40,7 +43,8 @@ def read_tsv(path: Path) -> pl.DataFrame:
                                          "gd_clusters": pl.Utf8, "gd_events": pl.Utf8})
 
 
-def cohort_summary(pgdd_input: pl.DataFrame, pgdd_regions: pl.DataFrame) -> pl.DataFrame:
+def cohort_summary(pgdd_input: pl.DataFrame, pgdd_regions: pl.DataFrame,
+                   single_clone: pl.DataFrame | None = None) -> pl.DataFrame:
     """One row per sample. Raises if a sample has more than one CN summary in the input."""
     sample_cn = pgdd_input.select(
         pl.col("sample_id").alias("sample_name_hash"),
@@ -59,8 +63,21 @@ def cohort_summary(pgdd_input: pl.DataFrame, pgdd_regions: pl.DataFrame) -> pl.D
 
     input_tumour = pgdd_input.select(pl.col("sample_id").alias("sample_name_hash"),
                                      pl.col("tumour_id").alias("_tumour_input")).unique()
-    return (sample_cn.join(regions, on="sample_name_hash", how="full", coalesce=True)
-                     .join(input_tumour, on="sample_name_hash", how="left")
-                     .with_columns(pl.coalesce("tumour_id", "_tumour_input").alias("tumour_id"))
-                     .select(COLUMNS)
-                     .sort("tumour_id", "sample_name_hash", nulls_last=True))
+    out = (sample_cn.join(regions, on="sample_name_hash", how="full", coalesce=True)
+                    .join(input_tumour, on="sample_name_hash", how="left")
+                    .with_columns(pl.coalesce("tumour_id", "_tumour_input").alias("tumour_id"),
+                                  pl.lit("pgdd").alias("source"))
+                    .select(COLUMNS))
+    if single_clone is not None and not single_clone.is_empty():
+        sc = single_clone.select(
+            pl.col("sample_id").alias("sample_name_hash"),
+            pl.col("num_gds").cast(pl.Int64).alias("GD predicted"),
+            (pl.col("num_gds").cast(pl.Int64) - 1).clip(lower_bound=0).alias("Second GD predicted"),
+            *[pl.col(src).alias(dst) for dst, src in SAMPLE_CN.items()],
+            "tumour_id", pl.lit("single_clone").alias("source"),
+        ).select(COLUMNS)
+        clash = set(sc["sample_name_hash"]) & set(out["sample_name_hash"])
+        if clash:
+            raise ValueError(f"samples both in PGDD and single-clone inputs: {sorted(clash)[:10]}")
+        out = pl.concat([out, sc], how="vertical_relaxed")
+    return out.sort("tumour_id", "sample_name_hash", nulls_last=True)

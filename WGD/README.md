@@ -25,10 +25,10 @@ canonical: `tumour_id` = `LTX0001-Tumour1`, `sample_id` = muttable
 
 | # | Step | Status |
 |---|---|---|
-| 00 | Build PGDD input from CONIPHER (`SCoutput.CLEAN`, `treeTable`, `allTrees`) and MSAI-adjusted CN segments: per-sample `num_gds` and doubled-genome fractions. Runs **before** PGDD. Port of Piotr's `00_prepare_pgdd_input.R` | ✅ `scripts/00_prepare_pgdd_input.py` |
+| 00 | Build PGDD input from CONIPHER (`SCoutput.CLEAN`, `treeTable`, `allTrees`) and MSAI-adjusted CN segments: per-sample `num_gds` and doubled-genome fractions. Runs **before** PGDD. Pre-flight: stops if SAMPLE ids differ between inputs in any tumour. Single-clone tumours bypass PGDD (`single_clone_*.tsv`: all GDs clonal on the one clone, counted from `num_gds`). Port of Piotr's `00_prepare_pgdd_input.R` | ✅ `scripts/00_prepare_pgdd_input.py` |
 | 01 | Parse PGDD; explode comma-joined `clusters`, `samples`, `gd_clusters` into long tables | ✅ `scripts/01_parse_pgdd.py` |
 | 02 | Prune against the tree (= clones ALPACA has: `cp_table.csv` / `tree_paths.json`, via tx_data `clone_proportions`): drop tumours without a tree; remove off-tree supporting clusters; an event left with no cluster is kept as `ploidy_only_pruned` | ✅ `scripts/02_prune_tree.py` |
-| 03 | Per-sample cohort summary `pgdd_cohort_gd_summary.tsv` (PGDD GD calls + ploidy + doubled-genome fraction). Port of Piotr's `03_generate_summary.R` | ✅ `scripts/03_generate_summary.py` |
+| 03 | Per-sample cohort summary `pgdd_cohort_gd_summary.tsv` (PGDD GD calls + ploidy + doubled-genome fraction; single-clone samples added with `source = single_clone`). Port of Piotr's `03_generate_summary.R` | ✅ `scripts/03_generate_summary.py` |
 | 04 | Place events on the clone tree (event, regions and clusters to a clone/branch) | ⏳ |
 | 05 | Check against ALPACA clone CN (`max(ratio_A, ratio_B)`) | ⏳ |
 | 06 | Integrated per-clone WGD table | ⏳ |
@@ -48,10 +48,16 @@ WGD_RSCRIPT="micromamba run -n pgdd Rscript" pixi run test   # also compares 00/
 ```
 
 Steps 00 and 03 give the same output as the R scripts (`tests/test_pgdd_input.py::test_parity_with_r`,
-synthetic inputs). The R scripts stay in `scripts/` as the reference. Python differences: only the
-default (first) tree of `allTrees.txt` is read (R pools all alternative trees), skipped tumours and
-their reasons go to `00_pgdd_input/run.json`, and the summary falls back to the input's `tumour_id`
-and is sorted.
+synthetic inputs). The R scripts stay in `scripts/` as the reference. Python differences:
+
+- only the default (first) tree of `allTrees.txt` is read (R pools all alternative trees);
+- single-clone tumours (CONIPHER writes their tree as `1\t1`) get the ploidy shortcut instead of being
+  skipped (Piotr, 2026-11-09). R skipped every one-edge tree, which also dropped real two-clone trees
+  (`1\t2`); those now go to PGDD. If a single-clone tumour's samples disagree on `num_gds`, the max is
+  used and `num_gds_discordant` is set;
+- a SAMPLE mismatch stops the whole run (R skipped the tumour). `--preflight-only` runs just the check;
+- tumours with missing/empty files are still skipped, with reasons in `00_pgdd_input/run.json`;
+- the summary has a `source` column, falls back to the input's `tumour_id` and is sorted.
 
 Step 01 compares the run's settings (thresholds from `pgdd_mut_counts.tsv`, bootstrap from
 `pgdd_bootstrap_discovery_settings.tsv`) with Piotr's settings (`wgd.pgdd.EXPECTED_SETTINGS`) and
