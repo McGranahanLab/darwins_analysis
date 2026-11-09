@@ -234,6 +234,8 @@ def test_compare():
 
 def test_sample_key():
     assert placement.sample_key("LTX0001_SU_T1.R1--ab12") == "LTX0001_SU_T1-R1"
+    assert placement.sample_key("LTX0025_SU_T1.R4..267e0b2fh2yt") == "LTX0025_SU_T1-R4"  # old PGDD, R-mangled
+    assert placement.sample_key("LTX0025_SU_T1-R4--267e0b2fh2yt") == "LTX0025_SU_T1-R4"
     with pytest.raises(ValueError, match="not in clone_proportions"):
         run(events((False, False, None, ["R9"])))
 

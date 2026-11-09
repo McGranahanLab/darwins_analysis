@@ -46,8 +46,13 @@ TRIAGE = ("no_gd", "clonal_gd_only", "alpaca_called", "mut_supported")
 # ---- ids --------------------------------------------------------------------
 
 def sample_key(sample: str) -> str:
-    """Region stem used to match samples across sources: drop the `--hash` suffix, '.' -> '-'."""
-    return sample.split("--")[0].replace(".", "-")
+    """Region stem used to match samples across sources: '.' -> '-', then drop the `--hash` suffix.
+
+    The old PGDD run wrote R-mangled names (`LTX0001_SU_T1.R1..hash`); the notebook
+    matched them by turning '-' into '.' in cp_table. Replace first, then split.
+    """
+    s = sample.strip().replace(".", "-")
+    return s.split("--")[0]
 
 
 def strip_clone(clusters: str | None) -> str | None:
