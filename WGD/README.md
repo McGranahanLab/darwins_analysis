@@ -89,6 +89,7 @@ not the hash suffix.
 
 ## Docs
 
+- [`TODO.md`](TODO.md): deferred work.
 - [`docs/previous_analysis_logic.md`](docs/previous_analysis_logic.md): the logic of the previous consolidation (`templates/previous_analysis.ipynb`) as a pipeline, with problems and open decisions.
 
 ## Caveats
