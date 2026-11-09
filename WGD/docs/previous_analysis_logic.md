@@ -159,6 +159,11 @@ Piotr: the metric needs improving, with three components. Proposal: compute each
 | **Parent–child multi-cluster** | `multicluster_parent_child` = the event's PGDD clusters include a direct parent–child pair (placed on the child, E) | always (wrong cluster split, or an unseen second GD in the child) | `pgdd_GD_events.clusters` + ALPACA tree |
 | **GD order** | `gd_order` = 1 for a first GD, 2 for a second, 3 for a third, counted along the root→leaf lineage | `gd_order ≥ 2`, stronger penalty for 3 | Our placement (04) |
 
+Quality codes: every quality below High carries `quality_code`, a `;`-joined list of reasons. Current codes:
+- `single_clone_num_gds_discordant`: a single-clone tumour whose samples disagree on `num_gds`. The mode is used and quality is **Low** (Piotr, 2026-11-09).
+- `num_gds_mode_tie`: no unique mode; the lowest tied value is used.
+- Planned: `multicluster_parent_child`, `low_mut_support`, `no_mut_support`, `borderline_ploidy`, `gd_order_2` / `gd_order_3`, `alpaca_ratio_borderline`.
+
 Combining: event quality = `High` with no flags, `Medium` with one, `Low` with two or more (or with `no_mut_support` plus `borderline_ploidy`). Tumour quality = the worst event, but the per-event flags are kept so users can filter on the reason. Thresholds `N_MIN` and `M_MIN` are open (section 7, reminder 4).
 
 ## 4. How it maps to the current WGD steps
@@ -174,20 +179,31 @@ Combining: event quality = `High` with no flags, `Medium` with one, `Low` with t
 
 ## 5. Things probably not to replicate
 
-1. **Greedy, order-dependent ALPACA assignment (C).** Events take the best remaining clone in file order, so a different order can produce a different assignment. Synthetic example:
+1. **Greedy, one-event-at-a-time ALPACA assignment (C).** Events take the best remaining candidate clone in file order. Nothing requires the chosen clone to explain *all* regions of the event and *none* of the undoubled regions, and nothing orders a first GD above a second GD.
+
+   *Revised 2026-11-09 after Piotr's review.* The first version of this example was wrong on two counts:
+   - Its ratios were inconsistent. ALPACA ratios are relative to the **parent** (`calculate_wgd_ratios`), so c2 = 1.95 and c4 = 1.6 meant two sequential doublings on the c2→c4 lineage, and nothing explained c5.
+   - PGDD would not produce two events. With no doubled clusters, it puts all regions with the same ploidy GD status into one event (`seperate_gd_events`, `R/parrallel_gd_caller.R` ~l.490). Checked by running `detect_par_gd` on that input: one event, `samples = R1,R2`.
+
+   Piotr's parsimony reading is the right answer for that tree: **one GD on c2**. It can't be on the MRCA because c3 sits in an undoubled region (R3), and c2 explains both c4 and c5. Tree + region ploidy alone pin it down, without ratios.
+
+   Where the old rule actually fails is with nested (first + second) ploidy-only events:
 
    ```
-   c1 (MRCA) ── c2 ──┬── c4      R1 = 100% c4
-            │        └── c5      R2 = 100% c5
-            └── c3               R3 = 100% c3   (not doubled)
-   ALPACA ratio_A: c2 = 1.95, c4 = 1.6, c5 = 1.1, c3 = 1.0
-   PGDD: two ploidy-only events, E1 in R1 and E2 in R2 (1 GD per region)
+   c1 (MRCA) ── c2 ──┬── c4      R1 = 100% c4   num_gds 2
+            │        └── c5      R2 = 100% c5   num_gds 1
+            └── c3               R3 = 100% c3   num_gds 0
+   ALPACA max(A,B) vs parent: c2 = 1.95, c4 = 2.05, c5 = 1.0, c3 = 1.0
+   PGDD: E1 (first GD) in R1,R2; E2 (second GD) in R1
    ```
-   Candidates: E1 → {c4, c2}; E2 → {c5, c2} (sample clones plus ancestors, MRCA excluded). c2 is the best candidate for both.
-   - Order E1, E2: E1 → c2 (1.95), E2 → c5 (1.1). Tumour **unresolved** (1.1 < 1.5).
-   - Order E2, E1: E2 → c2 (1.95), E1 → c4 (1.6). Tumour **resolved**.
+   The truth is GD1 on c2 and GD2 on c4. The old rule picks E1 from {c2, c4, c5} → **c4** (2.05 > 1.95), then E2 from {c4, c2} minus c4 → c2. That gives the first GD on c4, which doesn't cover R2, and the second GD on its ancestor. Both placements are impossible, yet the tumour is called `resolved` (both > 1.5). Processing E2 first happens to give the right answer, so order matters as well.
 
-   So the same tumour flips between resolved and unresolved with row order. Both answers are also biologically inconsistent: one event on c2 and the other on its descendant means one region carries **two** GDs, while PGDD saw one per region. Here ALPACA explained both doublings parsimoniously with one GD on c2. The two consistent answers are "one shared GD on c2" (PGDD's two events are really one) or "parallel GDs on c4 and c5". A greedy one-event-at-a-time pick can produce neither. A joint assignment (all events at once, no nesting allowed between first GDs, maximise total score) would.
+   **Proposed rule (for the placement step):** first compute each event's *feasible* clones from tree + region ploidy alone:
+   - the clone must be an ancestor-or-self of every clone in the event's regions;
+   - it must not be an ancestor-or-self of any clone in a region without the event;
+   - a second GD must be a descendant-or-self of the first GD's clone on that lineage.
+
+   Ratios are used only to choose within a feasible set that has more than one clone (a chain of single-child clones). If the feasible set is empty, flag the event rather than force it.
 2. **The MRCA is excluded from ALPACA candidates (C).** A ploidy-only "subclonal" event can never land on the MRCA, even when the MRCA has the highest `ratio_A`.
 3. **The multi-cluster rule contradicts its comment (E).** The comment says parent; the code picks the child.
 4. **Stale variable (G).** `forbidden_descendants` is reset for each event, but `forbidden_ancestors` is only set when other events exist. If a tumour's ploidy-only event is its only event, the code either raises a `NameError` (if no earlier event set the variable) or silently reuses the **previous tumour's** disallowed ancestors. *Latent in the old run:* G only sees events of mutation-supported tumours, which always have another event. It would bite as soon as G is applied more widely.
@@ -198,6 +214,21 @@ Combining: event quality = `High` with no flags, `Medium` with one, `Low` with t
 9. **State tracking through string prefixes** (`alpaca_`, `clonal_`, `multicluster_`, `ploidy_`, `false_call`, `reversion_`) packed into `clusters`, plus several `events_df` copies. We'll use explicit columns (`placed_clone`, `placement_method`, `flags`).
 10. **Hard-coded tumour lists, side-effect writes to shared queue files, and `which_q` lookups.** These are interactive scaffolding.
 11. **`gd_p_value` and the hypergeometric 2×2 tables.** We don't use the hypergeometric test any more. The current run keeps only bootstrap-stable calls (section D).
+
+## 5b. ALPACA ratio threshold: concerns (Darwin, 2026-11-09; revisit later, 1.5 in use)
+
+`ratio_X` = the length-weighted mean of child CN / parent CN over segments where the parent allele is > 0. The MRCA is compared with a diploid 1|1. A clean doubling gives 2 and no change gives 1, so 1.5 is the natural midpoint. **Decision: use 1.5 for now** (Piotr).
+
+Concerns:
+1. **High-level gains mimic a doubling.** The mean of ratios is not robust. A non-doubled allele unchanged over 90% of the genome and at 6× the parent over 10% scores 0.9 + 0.6 = 1.5. Arm gains or amplifications over ~10–20% of the genome can cross the threshold without a WGD.
+2. **Losses after a doubling hide it.** A doubled allele that falls back to one copy over half the genome scores 1.5. `max(A,B)` mitigates this when the other allele kept its copies.
+3. **`max(A,B)` is biased upward when one allele has little data.** If the parent has LOH over much of the genome, that allele's ratio rests on few segments (low `weight_sum_X`), and a single gained segment can push it over 1.5. Idea: let an allele into the max only if its `weight_sum` covers enough of the genome (e.g. ≥ 30%), otherwise use the other allele or `ratio_total`.
+4. **A hard cut.** Values near the threshold (say 1.3–1.7) are weak evidence. Idea: keep 1.5 for the call, but add `alpaca_ratio_borderline` to the quality.
+5. **Inherited errors.** The ratio is relative to the parent's ALPACA CN, so an error in the parent's CN propagates to all its children.
+
+Checks once real data exist:
+- The distribution of `max(A,B)` across clones should be bimodal near 1 and 2, with the trough near 1.5.
+- Clones carrying mutation-supported PGDD GDs should mostly be > 1.5; clearly undoubled clones (diploid regions) mostly < 1.5.
 
 ## 6. Decisions (answered by Piotr 2026-11-07 unless marked open)
 
@@ -218,4 +249,5 @@ Combining: event quality = `High` with no flags, `Medium` with one, `Low` with t
 | 2 | ALPACA ratio threshold: is 1.5 still right for the new ALPACA, now applied to `max(ratio_A, ratio_B)`? | Piotr | score ✅ max(A,B); threshold open |
 | 3 | Ploidy-only placement rule: pick a few real tumours and decide C vs G, and multi-sample events. | Piotr + Darwin | later |
 | 4 | Quality thresholds `N_MIN`, `M_MIN`. (Source of the per-sample doubled-genome fraction ✅: steps 00/03.) | Piotr | open |
-| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr | Piotr to reply |
+| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr + Darwin | ✅ example corrected 2026-11-09; feasible-set rule proposed, adopt in placement step |
+| 6 | ALPACA threshold concerns (section 5b). | Piotr | revisit later; 1.5 in use |

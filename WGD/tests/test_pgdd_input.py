@@ -80,7 +80,6 @@ def test_prepare(inputs):
     t = res.table
     assert t.columns == list(pgdd_input.OUTPUT_COLS)
     assert sorted(t["tumour_id"].unique()) == ["LTX0901-Tumour1", "LTX0902-Tumour1"]
-    assert res.skipped == {}
     assert res.single_clone["tumour_id"].unique().to_list() == ["LTX0903-Tumour1"]
     # cluster 5 is not in treeTable; cluster 6 is not an edge of the tree
     assert set(t["cluster_id"].unique()) == {1, 2, 3}
@@ -127,7 +126,19 @@ def test_single_clone(inputs):
     assert dict(zip(sc["sample_id"], sc["num_gds"])) == {_sample("LTX0903_1", 1): 1, _sample("LTX0903_1", 2): 0}
     ev = pgdd_input.single_clone_events(sc).row(0, named=True)
     assert ev["tumour_id"] == "LTX0903-Tumour1" and ev["clone"] == "clone1"
-    assert ev["n_clonal_gds"] == 1 and ev["num_gds_discordant"]  # synthetic R2 is not doubled
+    # synthetic R1 doubled, R2 not: a 1-1 tie -> lowest value, Low quality
+    assert ev["n_clonal_gds"] == 0 and ev["quality"] == "Low"
+    assert ev["quality_code"] == "single_clone_num_gds_discordant;num_gds_mode_tie"
+
+
+def test_single_clone_mode():
+    sc = pl.DataFrame({"tumour_id": ["A"] * 3 + ["B"] * 2, "clone": ["clone1"] * 5,
+                       "sample_id": ["a1", "a2", "a3", "b1", "b2"], "num_gds": [1, 1, 0, 2, 2]})
+    ev = {r["tumour_id"]: r for r in pgdd_input.single_clone_events(sc).iter_rows(named=True)}
+    assert ev["A"]["n_clonal_gds"] == 1 and ev["A"]["quality"] == "Low"
+    assert ev["A"]["quality_code"] == "single_clone_num_gds_discordant"
+    assert ev["A"]["num_gds_per_sample"] == "a1:1,a2:1,a3:0"
+    assert ev["B"]["n_clonal_gds"] == 2 and ev["B"]["quality"] == "High" and ev["B"]["quality_code"] is None
 
 
 def test_one_edge_two_clone_tree_goes_to_pgdd(tmp_path):
@@ -138,18 +149,30 @@ def test_one_edge_two_clone_tree_goes_to_pgdd(tmp_path):
     assert set(res.table["cluster_id"].unique()) == {1, 2}
 
 
-def test_sample_mismatch_fails_before_processing(inputs, monkeypatch):
+def test_input_problems_fail_before_processing(inputs, monkeypatch):
     conipher, msai = inputs
     _write_tumour(conipher, msai, "LTX0904_1", cn_samples=[_sample("LTX0904_1", 1)])  # CN missing R2
     _write_tumour(conipher, msai, "LTX0906_1")
     (conipher / "LTX0906_1" / "treeTable.tsv").write_text(
         "SAMPLE\tmutation_id\ttreeCLUSTER\nLTX0906_SU_T1-R9--x\t:1:1:C:T\t1\n")
+    _write_tumour(conipher, msai, "LTX0907_1")
+    (msai / "LTX0907_1" / "LTX0907_1_copynumber_MSAI_adjusted_segments_tree_input.tsv").unlink()
+    _write_tumour(conipher, msai, "LTX0908_1")
+    (conipher / "LTX0908_1" / "allTrees.txt").write_text("")
     called = []
     monkeypatch.setattr(pgdd_input, "prepare_tumour", lambda *a, **k: called.append(a))
-    with pytest.raises(pgdd_input.SampleMismatchError) as e:
+    with pytest.raises(pgdd_input.InputError) as e:
         pgdd_input.prepare_all(conipher, msai, log=lambda *_: None)
-    assert "LTX0904_1" in str(e.value) and "LTX0906_1" in str(e.value) and "2 tumour(s)" in str(e.value)
+    msg = str(e.value)
+    assert "4 tumour(s)" in msg
+    assert "LTX0904_1: SAMPLE ids differ" in msg and "LTX0906_1: SAMPLE ids differ" in msg
+    assert "LTX0907_1: missing CN segment file" in msg and "LTX0908_1: empty tree file" in msg
     assert called == []
+
+
+def test_unknown_selected_tumour_fails(inputs):
+    with pytest.raises(pgdd_input.InputError, match="LTX0999_1"):
+        pgdd_input.prepare_all(*inputs, tumours=["LTX0901_1", "LTX0999_1"], log=lambda *_: None)
 
 
 def test_summary(inputs, tmp_path):

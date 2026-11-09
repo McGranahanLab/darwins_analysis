@@ -21,13 +21,15 @@ Differences from the R script:
   from `num_gds` (Piotr, 2026-11-09), see `single_clone_events`. The R script
   skipped every tree with exactly one edge, which also dropped real two-clone
   trees (`1 \t 2`); those now go to PGDD.
-* A pre-flight pass checks all tumours first and stops the run if the SAMPLE ids
-  of SCoutput, treeTable and the CN segments differ in any tumour (R skipped the tumour).
+* A pre-flight pass checks all tumours first and stops the run, listing every
+  problem, if any tumour has a missing/empty file, missing columns, an unreadable
+  tree, or SAMPLE ids that differ between SCoutput, treeTable and the CN segments
+  (Piotr, 2026-11-09). The R script skipped such tumours.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -51,8 +53,13 @@ SINGLE_CLONE_SCHEMA = {
 }
 
 
-class SkipTumour(Exception):
-    """Input problem that makes one tumour unusable; the run continues."""
+class TumourInputError(Exception):
+    """Input problem in one tumour. Collected by the pre-flight, then fatal (InputError)."""
+
+
+class InputError(RuntimeError):
+    """One or more tumours have unusable inputs: missing/empty files, missing columns,
+    an unreadable tree, or SAMPLE ids that differ between inputs. The run stops."""
 
 
 @dataclass
@@ -78,9 +85,9 @@ class TumourFiles:
         for label, p in (("mutation file", self.mutations), ("CN segment file", self.cn),
                          ("tree file", self.all_trees), ("tree table file", self.tree_table)):
             if not p.exists():
-                raise SkipTumour(f"missing {label}: {p}")
+                raise TumourInputError(f"missing {label}: {p}")
             if p.stat().st_size == 0:
-                raise SkipTumour(f"empty {label}: {p}")
+                raise TumourInputError(f"empty {label}: {p}")
 
 
 # ---- tree ------------------------------------------------------------------
@@ -94,7 +101,7 @@ def default_tree_edges(all_trees: Path) -> list[tuple[int, int]]:
         lines = lines[starts[0] + 1:end]
     edges = [ln.split("\t") for ln in lines if ln.strip() and not ln.startswith("#")]
     if not edges:
-        raise SkipTumour(f"no edges found in {all_trees}")
+        raise TumourInputError(f"no edges found in {all_trees}")
     return [(int(p), int(c)) for p, c, *_ in edges]
 
 
@@ -111,7 +118,7 @@ def clonal_cluster(edges: list[tuple[int, int]]) -> int:
     children = {c for _, c in edges}
     roots = sorted(parents - children)
     if not roots:
-        raise SkipTumour("could not identify the root")
+        raise TumourInputError("could not identify the root")
     return roots[0]
 
 
@@ -166,40 +173,47 @@ def compute_num_gds(cn: pl.DataFrame) -> pl.DataFrame:
 
 # ---- pre-flight ----------------------------------------------------------------
 
-class SampleMismatchError(RuntimeError):
-    """SAMPLE ids differ between the mutation, tree-table and CN inputs of a tumour. Fatal."""
-
-
 def _samples(path: Path) -> set[str]:
     col = pl.read_csv(path, separator="\t", columns=["SAMPLE"], schema_overrides={"SAMPLE": pl.Utf8})["SAMPLE"]
     return {s for s in col.drop_nulls() if s.strip()}
 
 
-def preflight(conipher_dir: Path, msai_dir: Path, tumours: list[str]) -> dict[str, str]:
-    """Check every tumour before any processing.
+def _check_header(path: Path, cols, label: str) -> None:
+    header = path.open().readline().rstrip("\n").split("\t")
+    missing = [c for c in cols if c not in header]
+    if missing:
+        raise TumourInputError(f"missing column(s) in {label}: {', '.join(missing)}")
 
-    Returns {tumour: reason} for tumours with missing/empty files (they are skipped).
-    Raises SampleMismatchError listing every tumour whose SCoutput, treeTable and CN
-    sample sets differ.
+
+def _preflight_tumour(files: TumourFiles) -> None:
+    files.check()
+    _check_header(files.mutations, MUT_COLS, "mutations")
+    _check_header(files.tree_table, ("mutation_id", "SAMPLE", "treeCLUSTER"), "tree table")
+    _check_header(files.cn, CN_COLS, "CN segments")
+    clonal_cluster(default_tree_edges(files.all_trees))
+    sets = {"mutations": _samples(files.mutations), "treeTable": _samples(files.tree_table),
+            "CN": _samples(files.cn)}
+    union = set.union(*sets.values())
+    missing = {k: sorted(union - v) for k, v in sets.items() if union - v}
+    if missing:
+        raise TumourInputError("SAMPLE ids differ; missing from " +
+                               "; ".join(f"{k}: {v}" for k, v in missing.items()))
+
+
+def preflight(conipher_dir: Path, msai_dir: Path, tumours: list[str]) -> None:
+    """Check every tumour before any processing; raise InputError listing all problems.
+
+    Checked: files present and non-empty, required columns, a readable default tree,
+    and identical SAMPLE sets in SCoutput, treeTable and the CN segments.
     """
-    skipped, mismatches = {}, []
+    problems = []
     for t in tumours:
-        files = TumourFiles.locate(conipher_dir, msai_dir, t)
         try:
-            files.check()
-            sets = {"mutations": _samples(files.mutations), "treeTable": _samples(files.tree_table),
-                    "CN": _samples(files.cn)}
-        except (SkipTumour, pl.exceptions.ColumnNotFoundError) as e:
-            skipped[t] = str(e)
-            continue
-        union = set.union(*sets.values())
-        if any(v != union for v in sets.values()):
-            missing = {k: sorted(union - v) for k, v in sets.items() if union - v}
-            mismatches.append(f"  {t}: missing from " + "; ".join(f"{k}: {v}" for k, v in missing.items()))
-    if mismatches:
-        raise SampleMismatchError(f"SAMPLE ids differ between inputs in {len(mismatches)} tumour(s):\n"
-                                  + "\n".join(mismatches))
-    return skipped
+            _preflight_tumour(TumourFiles.locate(conipher_dir, msai_dir, t))
+        except TumourInputError as e:
+            problems.append(f"  {t}: {e}")
+    if problems:
+        raise InputError(f"input problems in {len(problems)} tumour(s):\n" + "\n".join(problems))
 
 
 # ---- per tumour --------------------------------------------------------------
@@ -213,7 +227,7 @@ def _read(path: Path) -> pl.DataFrame:
 def _require(df: pl.DataFrame, cols, label: str) -> None:
     missing = [c for c in cols if c not in df.columns]
     if missing:
-        raise SkipTumour(f"missing column(s) in {label}: {', '.join(missing)}")
+        raise TumourInputError(f"missing column(s) in {label}: {', '.join(missing)}")
 
 
 def prepare_tumour(files: TumourFiles, remove_nontree_clusters: bool = True
@@ -222,7 +236,7 @@ def prepare_tumour(files: TumourFiles, remove_nontree_clusters: bool = True
 
     Single-clone tumours do not go to PGDD: all their GDs are clonal, on the one
     clone, and are counted from the CN-based `num_gds` (Piotr, 2026-11-09).
-    Raises SkipTumour on unusable input.
+    Raises TumourInputError on unusable input.
     """
     files.check()
     muts = _read(files.mutations)
@@ -247,7 +261,7 @@ def prepare_tumour(files: TumourFiles, remove_nontree_clusters: bool = True
     mut_samples = {s for s in muts["SAMPLE"].drop_nulls() if s.strip()}
     cn_samples = {s for s in gds["SAMPLE"].drop_nulls() if s.strip()}
     if mut_samples != cn_samples:  # pre-flight should have caught this
-        raise SampleMismatchError(
+        raise TumourInputError(
             f"{files.tumour_id}: SAMPLE ids differ between tree mutations and CN: "
             f"only in mutations {sorted(mut_samples - cn_samples)[:10]}, "
             f"only in CN {sorted(cn_samples - mut_samples)[:10]}")
@@ -287,7 +301,7 @@ def prepare_tumour(files: TumourFiles, remove_nontree_clusters: bool = True
         ploidy.alias("ploidy"),
     )
     if out.is_empty():
-        raise SkipTumour("no PGDD input rows after filtering")
+        raise TumourInputError("no PGDD input rows after filtering")
     return out, None
 
 
@@ -295,23 +309,42 @@ def prepare_tumour(files: TumourFiles, remove_nontree_clusters: bool = True
 class PrepareResult:
     table: pl.DataFrame                 # PGDD input (tumours with a tree)
     single_clone: pl.DataFrame          # per-sample rows of single-clone tumours (not run through PGDD)
-    skipped: dict[str, str] = field(default_factory=dict)
+
+
+# Quality codes (`quality_code`, ";"-joined) explain a quality below High.
+QUALITY_CODES = {
+    "single_clone_num_gds_discordant": "single-clone tumour whose samples disagree on num_gds; the mode is used",
+    "num_gds_mode_tie": "no unique mode of num_gds across samples; the lowest tied value is used",
+}
 
 
 def single_clone_events(single_clone: pl.DataFrame) -> pl.DataFrame:
     """One row per single-clone tumour: `n_clonal_gds` clonal GDs on its only clone (the MRCA).
 
-    `n_clonal_gds` is the maximum `num_gds` over the tumour's samples. The clone is the
-    same in every sample, so samples should agree; `num_gds_discordant` flags those that don't.
+    The clone is the same in every sample, so samples should agree on `num_gds`.
+    If they don't (Piotr, 2026-11-09): `n_clonal_gds` = the mode (lowest value on a
+    tie), quality = Low, and `quality_code` says why.
     """
-    return (single_clone.group_by("tumour_id", "clone")
-                        .agg(pl.col("num_gds").max().alias("n_clonal_gds"),
-                             pl.col("num_gds").min().alias("n_clonal_gds_min"),
-                             pl.len().alias("n_samples"),
-                             pl.col("sample_id").sort().str.join(",").alias("samples"))
-                        .with_columns((pl.col("n_clonal_gds") != pl.col("n_clonal_gds_min"))
-                                      .alias("num_gds_discordant"))
-                        .sort("tumour_id"))
+    rows = []
+    for (tumour, clone), g in single_clone.group_by("tumour_id", "clone", maintain_order=True):
+        counts = g["num_gds"].value_counts(sort=True)
+        top = counts["count"].max()
+        modes = sorted(counts.filter(pl.col("count") == top)["num_gds"].to_list())
+        codes = []
+        if g["num_gds"].n_unique() > 1:
+            codes.append("single_clone_num_gds_discordant")
+        if len(modes) > 1:
+            codes.append("num_gds_mode_tie")
+        rows.append({
+            "tumour_id": tumour, "clone": clone, "n_clonal_gds": modes[0],
+            "n_samples": g.height,
+            "num_gds_per_sample": ",".join(f"{s}:{n}" for s, n in g.sort("sample_id").select("sample_id", "num_gds").iter_rows()),
+            "quality": "Low" if codes else "High",
+            "quality_code": ";".join(codes) or None,
+        })
+    schema = {"tumour_id": pl.Utf8, "clone": pl.Utf8, "n_clonal_gds": pl.Int32, "n_samples": pl.Int64,
+              "num_gds_per_sample": pl.Utf8, "quality": pl.Utf8, "quality_code": pl.Utf8}
+    return pl.DataFrame(rows, schema=schema).sort("tumour_id")
 
 
 def write_tsv(table: pl.DataFrame, path: Path) -> None:
@@ -331,7 +364,7 @@ def prepare_all(conipher_dir: Path, msai_dir: Path, tumours: list[str] | None = 
                 remove_nontree_clusters: bool = True, log=print) -> PrepareResult:
     """PGDD input for every tumour directory under `conipher_dir` (or the `tumours` subset).
 
-    Runs `preflight` first: any SAMPLE mismatch stops the run before processing.
+    Runs `preflight` first: any input problem stops the run before processing.
     """
     dirs = sorted(p.name for p in Path(conipher_dir).iterdir() if p.is_dir())
     if not dirs:
@@ -339,21 +372,17 @@ def prepare_all(conipher_dir: Path, msai_dir: Path, tumours: list[str] | None = 
     if tumours is not None:
         missing = sorted(set(tumours) - set(dirs))
         if missing:
-            log(f"WARNING: selected tumours not found: {', '.join(missing)}")
+            raise InputError(f"selected tumours not found in {conipher_dir}: {', '.join(missing)}")
         dirs = [d for d in dirs if d in set(tumours)]
 
-    skipped = preflight(conipher_dir, msai_dir, dirs)
-    for t, reason in skipped.items():
-        log(f"[{t}] skipped: {reason}")
+    preflight(conipher_dir, msai_dir, dirs)
 
     tables, single = [], []
-    for t in (d for d in dirs if d not in skipped):
+    for t in dirs:
         try:
             df, sc = prepare_tumour(TumourFiles.locate(conipher_dir, msai_dir, t), remove_nontree_clusters)
-        except SkipTumour as e:
-            skipped[t] = str(e)
-            log(f"[{t}] skipped: {e}")
-            continue
+        except TumourInputError as e:
+            raise InputError(f"{t}: {e}") from e
         if sc is not None:
             log(f"[{t}] single clone: samples={sc.height} num_gds={sorted(set(sc['num_gds']))} (not sent to PGDD)")
             single.append(sc)
@@ -361,10 +390,8 @@ def prepare_all(conipher_dir: Path, msai_dir: Path, tumours: list[str] | None = 
             log(f"[{t}] samples={df['sample_id'].n_unique()} mutations={df.height} clusters={df['cluster_id'].n_unique()}")
             tables.append(df)
 
-    if not tables and not single:
-        raise RuntimeError("no tumours produced output; see skipped tumours")
     table = (pl.concat(tables, how="vertical_relaxed").with_columns(canonical_tumour_id()).select(OUTPUT_COLS)
              if tables else pl.DataFrame(schema={c: pl.Utf8 for c in OUTPUT_COLS}))
     single_clone = (pl.concat(single, how="vertical_relaxed").with_columns(canonical_tumour_id())
                     if single else pl.DataFrame(schema=SINGLE_CLONE_SCHEMA))
-    return PrepareResult(table, single_clone, skipped)
+    return PrepareResult(table, single_clone)
