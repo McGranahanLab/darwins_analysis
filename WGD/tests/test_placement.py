@@ -73,7 +73,7 @@ def test_triage():
 
 
 def test_C_alpaca_single_event():
-    res = run(events((False, False, None, ["R1", "R2"])), rt=ratios(c2=1.95))
+    res = run(events((False, False, None, ["R1", "R2"])), rt=ratios(c2=1.95), ploidy_rule="notebook")
     assert placed(res) == ["alpaca_clone2"]
     assert res.tumours["status"].item() == "resolved"
 
@@ -81,20 +81,20 @@ def test_C_alpaca_single_event():
 def test_C_greedy_file_order():
     # notebook behaviour kept on purpose (doc section 5, item 1)
     ev = events((False, False, None, ["R1"]), (False, False, None, ["R2"]))
-    res = run(ev, tumour(n_sub=2), rt=ratios(c2=1.95, c4=1.6, c5=1.1))
+    res = run(ev, tumour(n_sub=2), rt=ratios(c2=1.95, c4=1.6, c5=1.1), ploidy_rule="notebook")
     assert placed(res) == ["alpaca_clone2", "alpaca_clone5"]
     assert res.tumours["status"].item() == "unresolved"  # 1.1 < 1.5
-    res = run(ev.reverse(), tumour(n_sub=2), rt=ratios(c2=1.95, c4=1.6, c5=1.1))
+    res = run(ev.reverse(), tumour(n_sub=2), rt=ratios(c2=1.95, c4=1.6, c5=1.1), ploidy_rule="notebook")
     assert placed(res) == ["alpaca_clone2", "alpaca_clone4"]
     assert res.tumours["status"].item() == "resolved"
 
 
 def test_C_mrca_never_a_candidate_and_max_ab():
     ev = events((False, False, None, ["R3"]))
-    res = run(ev, rt=ratios(c1=3.0, c3=1.2))
+    res = run(ev, rt=ratios(c1=3.0, c3=1.2), ploidy_rule="notebook")
     assert placed(res) == ["alpaca_clone3"]
     rt = ratios(c3=1.2).with_columns(pl.when(pl.col("clone") == "clone3").then(1.8).otherwise(1.0).alias("ratio_B"))
-    res = run(ev, rt=rt, score="max_AB")
+    res = run(ev, rt=rt, score="max_AB", ploidy_rule="notebook")
     assert res.events["alpaca_score"].item() == 1.8 and res.tumours["status"].item() == "resolved"
 
 
@@ -275,6 +275,48 @@ def test_ltx0025_like_greedy_case():
     cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": cp[s].get(c, 0.0)}
                          for s in cp for c in parent])
     ev = events((True, False, None, ["R1", "R2", "R4"]), (False, False, None, ["R4"]), (False, False, None, ["R4"]))
-    res = placement.place_events(ev, tumour("Clonal", 2, n_second=1, n_clonal=1), mut_counts(), rt, cpdf)
+    tu = tumour("Clonal", 2, n_second=1, n_clonal=1)
+    res = placement.place_events(ev, tu, mut_counts(), rt, cpdf, ploidy_rule="notebook")
     assert placed(res) == ["clonal_clone1", "alpaca_clone3", "alpaca_clone2"]
+    assert res.tumours["status"].item() == "unresolved"
+    # feasible-set rule: R4's two extra GDs both go on clone3, resolved automatically
+    res = placement.place_events(ev, tu, mut_counts(), rt, cpdf)
+    assert placed(res) == ["clonal_clone1", "feasible_clone3", "feasible_clone3"]
+    assert res.events["feasible_clones"].to_list()[1:] == ["clone3", "clone3"]
+    assert res.tumours["status"].item() == "resolved"
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    assert dict(zip(tb["clone"], tb["number_of_gds_at_clone"])) == {
+        "clone1": 1, "clone2": 0, "clone3": 2, "clone4": 0, "clone5": 0, "clone6": 0, "clone7": 0}
+    assert tb["total_gds_per_tumour"][0] == 3 and tb["sub_class"][0] == "sequential only"
+
+
+def test_feasible_rule():
+    tree = placement.Tree(PARENT)
+    props = {s: {CP[s]: 1.0} for s in CP}
+    # one GD in R1+R2 only: c2's subtree is all of R1 and R2 and none of R3
+    assert placement.feasible_clones(tree, props, ["R1", "R2"], list(CP)) == ["clone2"]
+    assert placement.feasible_clones(tree, props, ["R1"], list(CP)) == ["clone4"]
+    # a subclone below 50% of the sample can't explain it
+    props2 = {**props, "R1": {"clone4": 0.4, "clone2": 0.6}}
+    assert placement.feasible_clones(tree, props2, ["R1"], list(CP)) == []
+    # chain: c2 with a single present child c4 in R1 only -> both fit; the ratio picks
+    props3 = {"R1": {"clone4": 1.0}, "R3": {"clone3": 1.0}}
+    assert placement.feasible_clones(tree, props3, ["R1"], ["R1", "R3"]) == ["clone2", "clone4"]
+
+
+def test_C_feasible_chain_uses_ratio_and_threshold():
+    cp = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": float(c == k)}
+                       for s, k in (("R1", "clone4"), ("R3", "clone3")) for c in PARENT])
+    ev = events((False, False, None, ["R1"]))
+    res = placement.place_events(ev, tumour(), mut_counts(), ratios(c2=1.95, c4=1.1), cp)
+    assert placed(res) == ["feasible_clone2"] and res.events["placement_method"].item() == "ratio"
+    assert res.tumours["status"].item() == "resolved"
+    res = placement.place_events(ev, tumour(), mut_counts(), ratios(c2=1.3, c4=1.1), cp)
+    assert res.tumours["status"].item() == "unresolved"  # chain, best ratio 1.3 < 1.5
+
+
+def test_C_feasible_none():
+    ev = events((False, False, None, ["R1", "R3"]))  # c4 and c3 share no clone below the MRCA
+    res = run(ev)
+    assert placed(res) == ["no_feasible_clone"] and res.events["placed_clone"].item() is None
     assert res.tumours["status"].item() == "unresolved"

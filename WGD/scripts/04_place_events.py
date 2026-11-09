@@ -10,6 +10,10 @@ and `alpaca` (for the reversion flag). `--summary` defaults to
 `<out>/03_summary/pgdd_cohort_gd_summary.tsv` (used for the H flag). Without
 `--qc-table`/`--release-dir` no tumour QC is applied.
 `--alpaca-score` defaults to `ratio_A`, as in the notebook; `max_AB` is the 2026-11-09 decision.
+`--ploidy-rule` (tumours without mutation support, rule C): `feasible` (default) places each
+event on the clone whose subtree is the majority of every event sample and of no other
+sample, reusing clones and using the ratio only to choose within a chain; `notebook` is the
+old greedy rule.
 Writes `<out>/04_placed/`: events_placed.tsv, tumours_placed.tsv, run.json.
 """
 
@@ -35,6 +39,8 @@ def main() -> None:
     ap.add_argument("--qc-table", type=Path)
     ap.add_argument("--release-dir", type=Path)
     ap.add_argument("--alpaca-score", choices=("ratio_A", "max_AB"), default="ratio_A")
+    ap.add_argument("--ploidy-rule", choices=("feasible", "notebook"), default="feasible",
+                    help="rule C for tumours without mutation support (default: feasible set; notebook = old greedy rule)")
     args = ap.parse_args()
     if (args.qc_table is None) != (args.release_dir is None):
         ap.error("give both --qc-table and --release-dir, or neither")
@@ -61,7 +67,8 @@ def main() -> None:
         clone_proportions=pl.read_parquet(tx / "clone_proportions.parquet"),
         summary=summary,
         alpaca_cn=pl.read_parquet(tx / "alpaca.parquet") if (tx / "alpaca.parquet").exists() else None,
-        qc_tumours=qc, score=args.alpaca_score)
+        qc_tumours=qc, score=args.alpaca_score, ploidy_rule=args.ploidy_rule,
+        regions=pl.read_parquet(s01 / "pgdd_regions.parquet"))
 
     out = args.out / "04_placed"
     out.mkdir(parents=True, exist_ok=True)
@@ -70,6 +77,7 @@ def main() -> None:
     t = res.tumours
     run = {
         "alpaca_score": args.alpaca_score,
+        "ploidy_rule": args.ploidy_rule,
         "qc_applied": qc is not None,
         "tumours": t.height,
         "triage": dict(t.group_by("triage").len().sort("triage").iter_rows()),
