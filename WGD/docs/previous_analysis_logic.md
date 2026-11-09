@@ -198,7 +198,17 @@ Combining: event quality = `High` with no flags, `Medium` with one, `Low` with t
    ```
    The truth is GD1 on c2 and GD2 on c4. The old rule picks E1 from {c2, c4, c5} → **c4** (2.05 > 1.95), then E2 from {c4, c2} minus c4 → c2. That gives the first GD on c4, which doesn't cover R2, and the second GD on its ancestor. Both placements are impossible, yet the tumour is called `resolved` (both > 1.5). Processing E2 first happens to give the right answer, so order matters as well.
 
-   **Proposed rule (for the placement step):** first compute each event's *feasible* clones from tree + region ploidy alone:
+   **Status (Piotr, 2026-11-09): deferred.** The pipeline is first tested on real data with the previous rule (C) reproduced as is. The ideas and concerns below are for a later improvement pass.
+
+   Concerns with the current rule, in short:
+   - **Coverage is not checked.** The chosen clone may not be ancestral to all of the event's regions.
+   - **Exclusion is not checked.** The clone may be ancestral to an undoubled region; only the MRCA is excluded explicitly.
+   - **GD order is not enforced.** A second GD can land above the first.
+   - **Results depend on order.** Events take the best remaining clone in file order.
+   - **One event, one clone.** Events are never merged or split, and the clone is picked by ratio even when tree + ploidy already determine it.
+   - **The resolved check looks at ratios only.** A tumour can be `resolved` (all ratios > 1.5) with impossible placements, as in the example above.
+
+   **Proposed rule (later improvement):** first compute each event's *feasible* clones from tree + region ploidy alone:
    - the clone must be an ancestor-or-self of every clone in the event's regions;
    - it must not be an ancestor-or-self of any clone in a region without the event;
    - a second GD must be a descendant-or-self of the first GD's clone on that lineage.
@@ -249,5 +259,5 @@ Checks once real data exist:
 | 2 | ALPACA ratio threshold: is 1.5 still right for the new ALPACA, now applied to `max(ratio_A, ratio_B)`? | Piotr | score ✅ max(A,B); threshold open |
 | 3 | Ploidy-only placement rule: pick a few real tumours and decide C vs G, and multi-sample events. | Piotr + Darwin | later |
 | 4 | Quality thresholds `N_MIN`, `M_MIN`. (Source of the per-sample doubled-genome fraction ✅: steps 00/03.) | Piotr | open |
-| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr + Darwin | ✅ example corrected 2026-11-09; feasible-set rule proposed, adopt in placement step |
+| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr + Darwin | example corrected 2026-11-09; feasible-set rule documented. **Deferred:** test on real data with the previous rule first |
 | 6 | ALPACA threshold concerns (section 5b). | Piotr | revisit later; 1.5 in use |

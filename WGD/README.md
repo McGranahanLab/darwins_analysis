@@ -29,7 +29,7 @@ canonical: `tumour_id` = `LTX0001-Tumour1`, `sample_id` = muttable
 | 01 | Parse PGDD; explode comma-joined `clusters`, `samples`, `gd_clusters` into long tables | ✅ `scripts/01_parse_pgdd.py` |
 | 02 | Prune against the tree (= clones ALPACA has: `cp_table.csv` / `tree_paths.json`, via tx_data `clone_proportions`): drop tumours without a tree; remove off-tree supporting clusters; an event left with no cluster is kept as `ploidy_only_pruned` | ✅ `scripts/02_prune_tree.py` |
 | 03 | Per-sample cohort summary `pgdd_cohort_gd_summary.tsv` (PGDD GD calls + ploidy + doubled-genome fraction; single-clone samples added with `source = single_clone`). Port of Piotr's `03_generate_summary.R` | ✅ `scripts/03_generate_summary.py` |
-| 04 | Place events on the clone tree (event, regions and clusters to a clone/branch) | ⏳ |
+| 04 | Place events on the clone tree. First version reproduces the previous rules (C, E, F, G) as is, for testing on real data; improvements in `docs/previous_analysis_logic.md` §5 come later | ⏳ |
 | 05 | Check against ALPACA clone CN (`max(ratio_A, ratio_B)`) | ⏳ |
 | 06 | Integrated per-clone WGD table | ⏳ |
 
