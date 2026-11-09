@@ -55,8 +55,15 @@ def mut_counts(**cn2) -> pl.DataFrame:
 
 
 def run(ev, tu=None, mc=None, rt=None, **kw):
+    """Notebook rules (C/G) unless ploidy_rule is given."""
+    kw.setdefault("ploidy_rule", "notebook")
     return placement.place_events(ev, tu if tu is not None else tumour(), mc if mc is not None else mut_counts(),
                                   rt if rt is not None else ratios(), clone_props(), **kw)
+
+
+def regions_df(t: str, gds: dict[str, int]) -> pl.DataFrame:
+    return pl.DataFrame({"tumour_id": [t] * len(gds), "sample_id": [sample(s) for s in gds],
+                         "num_gds": list(gds.values())})
 
 
 def placed(res) -> list[str | None]:
@@ -207,6 +214,7 @@ def test_sub_class():
 def test_quality_low_supporting_count():
     t2 = "LTX0902-Tumour1"
     ev = pl.DataFrame({"tumour_id": [T, t2], "GD_event_id": ["a", "b"], "is_clonal": [False, False],
+                       "placed_as": ["4", "4"],
                        "placed_clone": ["clone4", "clone4"], "supporting_mut_count": [3, 40]})
     tu = pl.DataFrame({"tumour_id": [T, t2], "triage": ["mut_supported"] * 2, "status": ["unresolved"] * 2,
                        "n_unplaced": [0, 0]})
@@ -279,44 +287,68 @@ def test_ltx0025_like_greedy_case():
     res = placement.place_events(ev, tu, mut_counts(), rt, cpdf, ploidy_rule="notebook")
     assert placed(res) == ["clonal_clone1", "alpaca_clone3", "alpaca_clone2"]
     assert res.tumours["status"].item() == "unresolved"
-    # feasible-set rule: R4's two extra GDs both go on clone3, resolved automatically
-    res = placement.place_events(ev, tu, mut_counts(), rt, cpdf)
-    assert placed(res) == ["clonal_clone1", "feasible_clone3", "feasible_clone3"]
-    assert res.events["feasible_clones"].to_list()[1:] == ["clone3", "clone3"]
-    assert res.tumours["status"].item() == "resolved"
+    # fill rule: R4's two extra GDs both go on clone3, resolved automatically
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R4": 3})
+    res = placement.place_events(ev, tu, mut_counts(), rt, cpdf, ploidy_rule="fill", regions=reg)
+    assert placed(res) == ["clonal_clone1", "superseded_by_fill", "superseded_by_fill", "fill_clone3", "fill_clone3"]
+    assert res.tumours["status"].item() == "resolved" and res.tumours["fill"].item() == "complete"
     tb = final_table.build_table(res.events, res.tumours, tu, rt)
     assert dict(zip(tb["clone"], tb["number_of_gds_at_clone"])) == {
         "clone1": 1, "clone2": 0, "clone3": 2, "clone4": 0, "clone5": 0, "clone6": 0, "clone7": 0}
     assert tb["total_gds_per_tumour"][0] == 3 and tb["sub_class"][0] == "sequential only"
+    assert tb["n_unplaced_events"][0] == 0
 
 
-def test_feasible_rule():
+def test_ltx0073_mutation_plus_ploidy():
+    """Real case (Piotr, 2026-11-09): clonal GD, mutation-supported GD on clone3, and PGDD's
+    ploidy-only events GD3 (R1+R4), GD4 (R3), GD5 (R1). R4's 2nd GD is already explained by
+    clone3 (63% of R4). Expected: clone1 = 1, clone3 = 1, clone7 = 2, clone14 = 1."""
+    parent = {"clone15": "clone7", "clone4": "clone3", "clone11": "clone4", "clone5": "clone11", "clone1": "diploid",
+              "clone12": "clone5", "clone7": "clone1", "clone14": "clone5", "clone16": "clone14", "clone3": "clone8",
+              "clone6": "clone4", "clone8": "clone1"}
+    ra = {"clone15": 1.085, "clone4": 0.977, "clone11": 1.063, "clone5": 1.057, "clone1": 3.304, "clone12": 1.003,
+          "clone7": 1.138, "clone14": 1.106, "clone16": 1.029, "clone3": 0.984, "clone6": 0.908, "clone8": 1.002}
+    rt = pl.DataFrame({"tumour_id": [T] * 12, "clone": list(parent), "parent": list(parent.values()),
+                       "ratio_A": [ra[c] for c in parent], "ratio_B": [1.0] * 12})
+    cp = {"R1": {"clone7": 0.56, "clone15": 0.44}, "R2": {"clone6": 0.7787, "clone11": 0.2213},
+          "R3": {"clone14": 0.52, "clone16": 0.48}, "R4": {"clone3": 0.32, "clone8": 0.37, "clone11": 0.01, "clone12": 0.30}}
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": cp[s].get(c, 0.0)}
+                         for s in cp for c in parent])
+    ev = events((True, False, None, ["R1", "R2", "R3", "R4"]), (False, True, "3", ["R2", "R3"]),
+                (False, False, None, ["R1", "R4"]), (False, False, None, ["R3"]), (False, False, None, ["R1"]))
+    tu = tumour("Clonal", 4, n_second=2, n_clonal=1)
+    reg = regions_df(T, {"R1": 3, "R2": 2, "R3": 3, "R4": 2})
+    res = placement.place_events(ev, tu, mut_counts(c3=11), rt, cpdf, ploidy_rule="fill", regions=reg)
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    n = {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v}
+    assert n == {"clone1": 1, "clone3": 1, "clone7": 2, "clone14": 1}
+    assert res.tumours["status"].item() == "resolved"
+    # clone5 would also bring R3 to 3, but it covers clone12 (30% of R4): more spill than clone14
+    assert tb["total_gds_per_tumour"][0] == 5 and tb["class"][0] == "mut_supported"
+
+
+def test_sample_levels_and_fill_limits():
     tree = placement.Tree(PARENT)
     props = {s: {CP[s]: 1.0} for s in CP}
-    # one GD in R1+R2 only: c2's subtree is all of R1 and R2 and none of R3
-    assert placement.feasible_clones(tree, props, ["R1", "R2"], list(CP)) == ["clone2"]
-    assert placement.feasible_clones(tree, props, ["R1"], list(CP)) == ["clone4"]
-    # a subclone below 50% of the sample can't explain it
+    assert placement.sample_levels(tree, props, {"clone1": 1, "clone2": 1}) == {"R1": 2, "R2": 2, "R3": 1}
+    # a GD on clone4 alone can't reach R1 when clone4 is only 40% of it
     props2 = {**props, "R1": {"clone4": 0.4, "clone2": 0.6}}
-    assert placement.feasible_clones(tree, props2, ["R1"], list(CP)) == []
-    # chain: c2 with a single present child c4 in R1 only -> both fit; the ratio picks
-    props3 = {"R1": {"clone4": 1.0}, "R3": {"clone3": 1.0}}
-    assert placement.feasible_clones(tree, props3, ["R1"], ["R1", "R3"]) == ["clone2", "clone4"]
+    f = placement.fill_ploidy(tree, props2, {"R1": 2, "R2": 1, "R3": 1}, {"clone1": 1}, {})
+    assert [a["clone"] for a in f.added] == [] and f.remaining == {"R1": 1}
+    # over-explained: a fixed GD on clone2 pushes R2 above its target
+    f = placement.fill_ploidy(tree, props, {"R1": 2, "R2": 1, "R3": 1}, {"clone1": 1, "clone2": 1}, {})
+    assert f.over == {"R2": 1} and not f.added
 
 
-def test_C_feasible_chain_uses_ratio_and_threshold():
-    cp = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": float(c == k)}
-                       for s, k in (("R1", "clone4"), ("R3", "clone3")) for c in PARENT])
-    ev = events((False, False, None, ["R1"]))
-    res = placement.place_events(ev, tumour(), mut_counts(), ratios(c2=1.95, c4=1.1), cp)
-    assert placed(res) == ["feasible_clone2"] and res.events["placement_method"].item() == "ratio"
+def test_fill_resolution_and_status():
+    reg = regions_df(T, {"R1": 2, "R2": 2, "R3": 1})
+    # one ploidy-only event in R1 + R2: fill puts it on clone2
+    res = run(events((True, False, None, ["R1", "R2", "R3"]), (False, False, None, ["R1", "R2"])),
+              tumour("Clonal", 1, n_clonal=1), ploidy_rule="fill", regions=reg)
+    assert placed(res)[-1] == "fill_clone2" and res.tumours["status"].item() == "resolved"
+    # R1 and R3 doubled but not R2: no single clone, so two parallel GDs (clone4, clone3)
+    reg2 = regions_df(T, {"R1": 2, "R2": 1, "R3": 2})
+    res = run(events((True, False, None, ["R1", "R2", "R3"]), (False, False, None, ["R1", "R3"])),
+              tumour("Clonal", 1, n_clonal=1), ploidy_rule="fill", regions=reg2)
+    assert sorted(placed(res)[2:]) == ["fill_clone3", "fill_clone4"]
     assert res.tumours["status"].item() == "resolved"
-    res = placement.place_events(ev, tumour(), mut_counts(), ratios(c2=1.3, c4=1.1), cp)
-    assert res.tumours["status"].item() == "unresolved"  # chain, best ratio 1.3 < 1.5
-
-
-def test_C_feasible_none():
-    ev = events((False, False, None, ["R1", "R3"]))  # c4 and c3 share no clone below the MRCA
-    res = run(ev)
-    assert placed(res) == ["no_feasible_clone"] and res.events["placed_clone"].item() is None
-    assert res.tumours["status"].item() == "unresolved"

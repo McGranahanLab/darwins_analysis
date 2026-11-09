@@ -10,10 +10,10 @@ and `alpaca` (for the reversion flag). `--summary` defaults to
 `<out>/03_summary/pgdd_cohort_gd_summary.tsv` (used for the H flag). Without
 `--qc-table`/`--release-dir` no tumour QC is applied.
 `--alpaca-score` defaults to `ratio_A`, as in the notebook; `max_AB` is the 2026-11-09 decision.
-`--ploidy-rule` (tumours without mutation support, rule C): `feasible` (default) places each
-event on the clone whose subtree is the majority of every event sample and of no other
-sample, reusing clones and using the ratio only to choose within a chain; `notebook` is the
-old greedy rule.
+`--ploidy-rule`: `fill` (default) places ploidy-only GDs per tumour: clonal and
+mutation-supported GDs are fixed, then GDs are added until every sample reaches its PGDD
+num_gds without exceeding it (see wgd.placement.fill_ploidy); `notebook` runs the old
+rules C and G.
 Writes `<out>/04_placed/`: events_placed.tsv, tumours_placed.tsv, run.json.
 """
 
@@ -39,8 +39,8 @@ def main() -> None:
     ap.add_argument("--qc-table", type=Path)
     ap.add_argument("--release-dir", type=Path)
     ap.add_argument("--alpaca-score", choices=("ratio_A", "max_AB"), default="ratio_A")
-    ap.add_argument("--ploidy-rule", choices=("feasible", "notebook"), default="feasible",
-                    help="rule C for tumours without mutation support (default: feasible set; notebook = old greedy rule)")
+    ap.add_argument("--ploidy-rule", choices=("fill", "notebook"), default="fill",
+                    help="placement of ploidy-only GDs (default: tumour-level fill; notebook = old rules C and G)")
     args = ap.parse_args()
     if (args.qc_table is None) != (args.release_dir is None):
         ap.error("give both --qc-table and --release-dir, or neither")

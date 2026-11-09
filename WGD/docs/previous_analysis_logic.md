@@ -209,7 +209,7 @@ The notebook's automatic rules are ported as is in `wgd/placement.py` (step 04) 
    ```
    The truth is GD1 on c2 and GD2 on c4. The old rule picks E1 from {c2, c4, c5} → **c4** (2.05 > 1.95), then E2 from {c4, c2} minus c4 → c2. That gives the first GD on c4, which doesn't cover R2, and the second GD on its ancestor. Both placements are impossible, yet the tumour is called `resolved` (both > 1.5). Processing E2 first happens to give the right answer, so order matters as well.
 
-   **Status:** deferred at first, so the pipeline could be tested on real data with the old rule (C). **Implemented for C on 2026-11-09** after the real case LTX0025 (Piotr): see "Feasible-set rule C" below. G (ploidy-only events inside mutation-supported tumours) still uses the old rule.
+   **Status:** deferred at first, so the pipeline could be tested on real data with the old rule (C). **Replaced on 2026-11-09** by the tumour-level ploidy fill, after the real cases LTX0025 and LTX0073 (Piotr): see "Ploidy fill" below. It covers both C and G.
 
    Concerns with the current rule, in short:
    - **Coverage is not checked.** The chosen clone may not be ancestral to all of the event's regions.
@@ -236,18 +236,18 @@ The notebook's automatic rules are ported as is in `wgd/placement.py` (step 04) 
 10. **Hard-coded tumour lists, side-effect writes to shared queue files, and `which_q` lookups.** These are interactive scaffolding.
 11. **`gd_p_value` and the hypergeometric 2×2 tables.** We don't use the hypergeometric test any more. The current run keeps only bootstrap-stable calls (section D).
 
-### Feasible-set rule C (step 04 default since 2026-11-09; `--ploidy-rule notebook` restores the old rule)
+### Ploidy fill (step 04 default since 2026-11-09; `--ploidy-rule notebook` restores rules C and G)
 
-For tumours without mutation support, each subclonal PGDD event is placed using the tree and clone proportions first:
-1. A clone is **feasible** if its subtree makes up **more than 50%** of every sample carrying the event (the doubling explains the doubled samples) and **at most 50%** of every other sample of the tumour (it doesn't reach undoubled samples). The tumour's samples come from `pgdd_GDs_per_region`.
-2. Exactly one feasible clone → place the event there (`placement_method = unique`).
-3. Several (a chain of single-child clones) → the highest ALPACA score among them (`ratio`).
-4. None → `no_feasible_clone`, the event is unplaced.
-5. Clones can be reused: events with the same samples (e.g. a second and a third GD in one region) can sit on the same clone, giving `number_of_gds_at_clone = 2`.
-6. **Status:** `resolved` when every event is `unique`, or picked by a ratio above 1.5; otherwise `unresolved`.
-7. The H check (GDs on a path vs sample ploidy) counts events, not distinct clones, under this rule.
+This replaces the per-event rules C and G with one tumour-level rule. PGDD's ploidy-only events are not placed one by one. They are **superseded**: GDs are added until every sample's GD level matches its PGDD `num_gds`.
+1. **Fixed GDs:** clonal events go on the MRCA, and mutation-supported events go on their clone (multi-cluster parent–child pairs go to the child). If a fixed event can't be put on an ALPACA clone (off-tree cluster, unresolved multi-cluster), the tumour is left unresolved (`fill = fixed_event_not_on_tree`).
+2. **Sample level:** a clone's count is the number of GDs on its root path. A sample's level is the largest k such that clones with count ≥ k make up **more than 50%** of the sample, from the ALPACA `cp_table` (the sample-level analogue of PGDD's ≥ 50%-of-genome rule). Targets are `num_gds` from `pgdd_GDs_per_region`.
+3. **Adding GDs:** one at a time, on the clone that (a) raises the most samples still below target, without pushing any sample above its target; (b) covers the fewest cells in samples it doesn't raise ("spill"); (c) has the highest ALPACA score; (d) comes first in the tree. A clone can take several GDs. Each added GD is a row `fill<i>` in `events_placed.tsv`, with the samples it raised and any equally good alternatives (`fill_alternatives`, flag `fill_tie`).
+4. **Status:** `resolved` when every sample ends exactly at its `num_gds` (`fill = complete`). Otherwise `unresolved`, with `fill = missing:<sample>=n` or `over:<sample>=n` (the fixed GDs already exceed the target).
+5. The H check (GDs on a path vs sample ploidy) counts events under this rule.
 
-**LTX0025-T1** (the case that prompted this): one clonal GD, then GD2 and GD3, both only in R4 (`genome_frac_nMaj3/4` > 0.5). R4 = clone3 (0.6) + clone5 (0.4). clone2 is excluded because its subtree (clone4, clone6) is all of R2, which has one GD. clone5 is only 40% of R4. So clone3 is the only feasible clone, and it takes both GDs. Old rule: clone3 (1.48), then clone2 (1.41, because clone3 was taken), unresolved, fixed by hand. New rule: clone1 = 1, clone3 = 2, resolved. Replayed from the real PGDD files.
+**LTX0025-T1:** clonal GD on clone1; R4 needs two more. R4 = clone3 (0.6) + clone5 (0.4). clone2 would also raise R2 (its subtree is all of R2) past its single GD. clone5 alone is under 50% of R4. So clone3 takes both GDs → clone1 = 1, clone3 = 2, resolved. The old rule gave clone3 then clone2 (unresolved, fixed by hand).
+
+**LTX0073-T1** (mutation + ploidy): fixed GDs on clone1 (clonal) and clone3 (mutation-supported, cluster 3). Levels then: R1 = 1 (target 3), R2 = 2 (2), R3 = 2 (3), R4 = 2 (2), because clone3's subtree is 63% of R4. PGDD's ploidy-only event GD3 (R1 + R4) can't fit this tree, which is why per-event placement fails. Fill: clone7 twice (R1 = clone7 + clone15), then clone14 (R3 = clone14 + clone16). clone5 would also raise R3, but it covers clone12, 30% of R4: more spill. Result clone1 = 1, clone3 = 1, clone7 = 2, clone14 = 1, resolved. That's Piotr's answer. Both cases were replayed from the real PGDD files.
 
 ## 5b. ALPACA ratio threshold: concerns (Darwin, 2026-11-09; revisit later, 1.5 in use)
 
@@ -283,5 +283,5 @@ Checks once real data exist:
 | 2 | ALPACA ratio threshold: is 1.5 still right for the new ALPACA, now applied to `max(ratio_A, ratio_B)`? | Piotr | score ✅ max(A,B); threshold open |
 | 3 | Ploidy-only placement rule: pick a few real tumours and decide C vs G, and multi-sample events. | Piotr + Darwin | later |
 | 4 | Quality thresholds `N_MIN`, `M_MIN`. (Source of the per-sample doubled-genome fraction ✅: steps 00/03.) | Piotr | open |
-| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr + Darwin | ✅ feasible-set rule C implemented 2026-11-09 (LTX0025); G still old |
+| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr + Darwin | ✅ replaced by the tumour-level ploidy fill, 2026-11-09 (LTX0025, LTX0073) |
 | 6 | ALPACA threshold concerns (section 5b). | Piotr | revisit later; 1.5 in use |
