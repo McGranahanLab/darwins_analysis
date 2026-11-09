@@ -29,9 +29,9 @@ canonical: `tumour_id` = `LTX0001-Tumour1`, `sample_id` = muttable
 | 01 | Parse PGDD; explode comma-joined `clusters`, `samples`, `gd_clusters` into long tables | ✅ `scripts/01_parse_pgdd.py` |
 | 02 | Prune against the tree (= clones ALPACA has: `cp_table.csv` / `tree_paths.json`, via tx_data `clone_proportions`): drop tumours without a tree; remove off-tree supporting clusters; an event left with no cluster is kept as `ploidy_only_pruned` | ✅ `scripts/02_prune_tree.py` |
 | 03 | Per-sample cohort summary `pgdd_cohort_gd_summary.tsv` (PGDD GD calls + ploidy + doubled-genome fraction; single-clone samples added with `source = single_clone`). Port of Piotr's `03_generate_summary.R` | ✅ `scripts/03_generate_summary.py` |
-| 04 | Place events on the clone tree. First version reproduces the previous rules (C, E, F, G) as is, for testing on real data; improvements in `docs/previous_analysis_logic.md` §5 come later | ⏳ |
-| 05 | Check against ALPACA clone CN (`max(ratio_A, ratio_B)`) | ⏳ |
-| 06 | Integrated per-clone WGD table | ⏳ |
+| 04 | Place events on ALPACA clones: the previous notebook's rules A–I ported as is (QC, triage, ALPACA-ratio greedy pick, multi-cluster → child, clonal → MRCA, tree-position placement, path-vs-ploidy and reversion flags, supporting mutation counts). Improvements (doc §5) come later | ✅ `scripts/04_place_events.py` |
+| 05 | Per-clone table in the previous release format (`tumour_id, clone, parent, number_of_gds_at_clone, total_gds_per_tumour, quality, status, class, sub_class`, + `quality_code`, `n_unplaced_events`) | ✅ `scripts/05_final_table.py` |
+| 06 | Compare with the previous release table | ✅ `scripts/06_compare.py` |
 
 ## Run
 
@@ -43,6 +43,10 @@ pixi run parse_pgdd --nemo-root ../../tx_data/nemo_mock --out output/mock
 pixi run prune_tree --tx-data-dir ../../tx_data/data --out output/mock
 pixi run generate_summary --pgdd-input output/<name>/00_pgdd_input/pgdd_input_all_tumours.tsv \
     --pgdd-regions <pgdd_dir>/pgdd_GDs_per_region.tsv --out output/<name>
+pixi run place_events --tx-data-dir <tx_data>/data --out output/<name> \
+    [--qc-table <manual_qc.tsv> --release-dir <_RELEASE/release_tx842>] [--alpaca-score ratio_A|max_AB]
+pixi run final_table --tx-data-dir <tx_data>/data --out output/<name>
+pixi run compare_tables --old <previous table> --out output/<name>
 pixi run test     # needs tx_data with PR #5 next to darwins_analysis, or TX_DATA_REPO
 WGD_RSCRIPT="micromamba run -n pgdd Rscript" pixi run test   # also compares 00/03 with the R scripts
 ```

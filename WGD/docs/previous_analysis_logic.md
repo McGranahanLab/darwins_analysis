@@ -177,6 +177,17 @@ Combining: event quality = `High` with no flags, `Medium` with one, `Low` with t
 | H, I | 05 checks against ALPACA |
 | J, K | 06 integrated table |
 
+### Port notes (steps 04–06, 2026-11-09)
+
+The notebook's automatic rules are ported as is in `wgd/placement.py` (step 04) so the new table can be checked against the previous release (step 06). Found while porting:
+- **Rows** come from wgd_viewer in the old flow. Here they are generated: one row per ALPACA clone (`wgd_ratio_scores`) of every QC-passed PGDD tumour. `status` is the notebook's automatic queue status: `resolved` for no_gd, clonal_gd_only, and alpaca_called with every ratio > 1.5; `unresolved` otherwise. The manual statuses and the viewer's own quality can't be reproduced.
+- **E with old cluster labels.** The notebook builds `f"clone{c}"` from `clusters`. If the old run wrote `clone3,clone6` (cell [6] suggests it did), that gives `cloneclone3` and the multi-cluster rule never fires. The port strips the prefix first, so the rule does fire. Expect differences on multi-cluster tumours if the old run used prefixed labels.
+- **G: a plain cluster label doesn't disallow its own clone** (`4` is listed, not `clone4`). A ploidy-only event can therefore land on the same clone as a mutation-supported one. Kept as is.
+- **H and K1** would raise on `alpaca_None`, on unresolved multi-cluster labels (`3,6`), or when a cluster is missing from `mut_counts`. The port skips these, or gives a null count.
+- **G stale variable** (section 5, item 4): when there are no other events, the disallowed ancestors are empty.
+- **class / sub_class:** class maps the triage (no_gd → no_wgd, clonal_gd_only → clonal_wgd, alpaca_called → ploidy_only, mut_supported). sub_class isn't in the notebook. It follows the tx_data `wgd_calls` definitions and is computed only when every event is placed on an ALPACA clone.
+- **ALPACA score** defaults to `ratio_A` (notebook). `--alpaca-score max_AB` applies decision 2.
+
 ## 5. Things probably not to replicate
 
 1. **Greedy, one-event-at-a-time ALPACA assignment (C).** Events take the best remaining candidate clone in file order. Nothing requires the chosen clone to explain *all* regions of the event and *none* of the undoubled regions, and nothing orders a first GD above a second GD.
