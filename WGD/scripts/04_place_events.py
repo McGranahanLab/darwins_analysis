@@ -51,7 +51,7 @@ def main() -> None:
     qc = None
     if args.qc_table:
         tx_qc, qc = placement.qc_pass(args.qc_table, args.release_dir)
-        print(f"QC: {len(tx_qc)} tumours FINALIZED, {len(qc)} also pass truncal CCF > 0.9")
+        print(f"QC: {len(tx_qc)} tumours FINALIZED, {len(qc)} also pass truncal CCF > 90%")
 
     res = placement.place_events(
         events=pl.read_parquet(s01 / "pgdd_events.parquet"),

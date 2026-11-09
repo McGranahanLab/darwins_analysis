@@ -124,8 +124,14 @@ class Tree:
 
 # ---- A: QC ------------------------------------------------------------------
 
-def qc_pass(qc_table: Path, release_dir: Path, ccf_threshold: float = 0.9) -> tuple[set[str], set[str]]:
-    """(tx_QC tumours, tx_QC & ccf_QC tumours). notebook get_qc_df + additional_ccf_qc."""
+def qc_pass(qc_table: Path, release_dir: Path, ccf_threshold: float = 90) -> tuple[set[str], set[str]]:
+    """(tx_QC tumours, tx_QC & ccf_QC tumours). notebook get_qc_df + additional_ccf_qc.
+
+    `meanCCF` in clusterInfo.txt is in percent (0 to slightly above 100), so the
+    cut-off is 90 (Piotr, 2026-11-09; the notebook's 0.9 assumed fractions).
+    Missing meanCCF occurs only on clusters off the tree; on a truncal tree
+    cluster it is an error.
+    """
     qc = pl.read_csv(qc_table, separator="\t", infer_schema_length=None)
     qc = qc.filter(pl.col("selected_solution").cast(pl.Utf8).str.to_lowercase() == "true").with_columns(
         (pl.col("patient") + "-Tumour" + pl.col("tumour_id").cast(pl.Float64).cast(pl.Int64).cast(pl.Utf8))
@@ -145,6 +151,8 @@ def qc_pass(qc_table: Path, release_dir: Path, ccf_threshold: float = 0.9) -> tu
                 .with_columns(pl.col("meanCCF").cast(pl.Float64, strict=False)))
         as_bool = lambda c: pl.col(c).cast(pl.Utf8).str.to_lowercase().is_in(["true", "1"])  # noqa: E731
         trunk = ci.filter(as_bool("treeClust") & as_bool("truncal"))
+        if trunk["meanCCF"].null_count():
+            raise ValueError(f"{f}: missing meanCCF on a truncal tree cluster")
         if trunk.height and trunk["meanCCF"].min() > ccf_threshold:
             passed.add(pt)
     return set(finalized), passed
