@@ -74,3 +74,10 @@ def test_non_tree_clusters_are_carried_through(tables):
     assert _clusters(ec, "LTX0006-Tumour1_GD1") == {"7"}
     rc = pgdd.region_clusters(tables["regions"])
     assert "12" in set(rc.filter(pl.col("tumour_id") == "LTX0007-Tumour1")["cluster_id"])
+
+
+def test_check_settings(tables):
+    diff = pgdd.check_settings(tables)
+    assert set(diff) <= {"check_mut_cpn_2_threshold"}  # mock before tx_data#6 used the 1.5 fallback
+    bad = {**tables, "settings": tables["settings"].with_columns(pl.lit(100).alias("n_boot"))}
+    assert pgdd.check_settings(bad)["n_boot"] == {"expected": 500, "found": [100]}

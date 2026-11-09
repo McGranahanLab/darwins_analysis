@@ -25,21 +25,38 @@ canonical: `tumour_id` = `LTX0001-Tumour1`, `sample_id` = muttable
 
 | # | Step | Status |
 |---|---|---|
+| 00 | Build PGDD input from CONIPHER (`SCoutput.CLEAN`, `treeTable`, `allTrees`) and MSAI-adjusted CN segments: per-sample `num_gds` and doubled-genome fractions. Runs **before** PGDD. Port of Piotr's `00_prepare_pgdd_input.R` | ✅ `scripts/00_prepare_pgdd_input.py` |
 | 01 | Parse PGDD; explode comma-joined `clusters`, `samples`, `gd_clusters` into long tables | ✅ `scripts/01_parse_pgdd.py` |
 | 02 | Prune against the tree (= clones ALPACA has: `cp_table.csv` / `tree_paths.json`, via tx_data `clone_proportions`): drop tumours without a tree; remove off-tree supporting clusters; an event left with no cluster is kept as `ploidy_only_pruned` | ✅ `scripts/02_prune_tree.py` |
-| 03 | Place events on the clone tree (event, regions and clusters to a clone/branch) | ⏳ |
-| 04 | Check against ALPACA clone CN | ⏳ |
-| 05 | Integrated per-clone WGD table | ⏳ |
+| 03 | Per-sample cohort summary `pgdd_cohort_gd_summary.tsv` (PGDD GD calls + ploidy + doubled-genome fraction). Port of Piotr's `03_generate_summary.R` | ✅ `scripts/03_generate_summary.py` |
+| 04 | Place events on the clone tree (event, regions and clusters to a clone/branch) | ⏳ |
+| 05 | Check against ALPACA clone CN (`max(ratio_A, ratio_B)`) | ⏳ |
+| 06 | Integrated per-clone WGD table | ⏳ |
 
 ## Run
 
 ```bash
 pixi install
+pixi run prepare_pgdd_input --conipher-dir <conipher> --msai-dir <msai> --out output/<name>   # before PGDD
 pixi run parse_pgdd --nemo-root /nemo --out output/<name>      # on Nemo
 pixi run parse_pgdd --nemo-root ../../tx_data/nemo_mock --out output/mock
 pixi run prune_tree --tx-data-dir ../../tx_data/data --out output/mock
+pixi run generate_summary --pgdd-input output/<name>/00_pgdd_input/pgdd_input_all_tumours.tsv \
+    --pgdd-regions <pgdd_dir>/pgdd_GDs_per_region.tsv --out output/<name>
 pixi run test     # needs tx_data with PR #5 next to darwins_analysis, or TX_DATA_REPO
+WGD_RSCRIPT="micromamba run -n pgdd Rscript" pixi run test   # also compares 00/03 with the R scripts
 ```
+
+Steps 00 and 03 give the same output as the R scripts (`tests/test_pgdd_input.py::test_parity_with_r`,
+synthetic inputs). The R scripts stay in `scripts/` as the reference. Python differences: only the
+default (first) tree of `allTrees.txt` is read (R pools all alternative trees), skipped tumours and
+their reasons go to `00_pgdd_input/run.json`, and the summary falls back to the input's `tumour_id`
+and is sorted.
+
+Step 01 compares the run's settings (thresholds from `pgdd_mut_counts.tsv`, bootstrap from
+`pgdd_bootstrap_discovery_settings.tsv`) with Piotr's settings (`wgd.pgdd.EXPECTED_SETTINGS`) and
+warns on any difference. Note that `check_mut_cpn_2_threshold` has to be passed explicitly (1.25):
+the PGDD default falls back to the discovery value, 1.5.
 
 Step 01 output (`output/<name>/01_pgdd/`):
 

@@ -13,6 +13,8 @@ numpy = ">=1.26"
 pytest = ">=8.0"
 
 [tasks]
+prepare_pgdd_input = "python scripts/00_prepare_pgdd_input.py"
 parse_pgdd = "python scripts/01_parse_pgdd.py"
 prune_tree = "python scripts/02_prune_tree.py"
+generate_summary = "python scripts/03_generate_summary.py"
 test    = "pytest tests/ -q"

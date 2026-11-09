@@ -76,7 +76,7 @@ Note that a tumour whose `First_GD` is subclonal but which also has a clonal sec
 For each subclonal event, in file order:
 1. Find the clones present in the event's samples: clones with `cp_table` proportion > 0 in any of those samples (summed across them). Add **all ancestors** of those clones, since extinct ancestors can carry the event.
 2. Candidates are the ALPACA `wgd_ratio_scores` rows for those clones, **excluding the MRCA** (`parent != "diploid"`) and excluding clones already given to an earlier event in the same tumour.
-3. Pick the candidate with the **highest `ratio_A`**. Write `clusters = "alpaca_<clone>"` and store `alpaca_ratio_A`.
+3. Pick the candidate with the **highest `ratio_A`**. (New: we use `max(ratio_A, ratio_B)`, see decision 2.) Write `clusters = "alpaca_<clone>"` and store `alpaca_ratio_A`.
 
 The tumour is `resolved` if **every** event has `ratio_A > 1.5`. Otherwise it is `unresolved` and gets checked in wgd_viewer.
 
@@ -90,7 +90,7 @@ The tumour is `resolved` if **every** event has `ratio_A > 1.5`. Otherwise it is
 ### E. Multi-cluster events `[24]`
 - Events with exactly 2 clusters: if the two clusters are a direct **parent–child** pair on the ALPACA tree, the event is assigned to one of them (`clusters = "multicluster_<clone>"`).
   - ⚠️ The comment says "move the event to the parent", but the code selects the row where `clone` is one cluster and `parent` is the other. That row's `clone` is the **child**, so the code assigns the event to the child.
-  - **Decision (Piotr, 2026-11-07): follow the code (child) for now.** ⏰ Reminder 1 (section 7): Piotr checks real output to establish which version is correct.
+  - **Decision (Piotr, 2026-11-09): the child.** If the event were placed on the parent, the doubled mutations of the child could only be explained by a second GD in the child. A parent–child pair therefore means something went wrong: either (a) the two clusters should be one (wrong split), or (b) the child really has a second GD, which should then show in its ploidy. Such events get a quality penalty (flag `multicluster_parent_child`, K').
 - Events with more than 2 clusters are skipped with a warning.
 - Pairs that aren't parent–child are left unchanged. The comment says they should be "flagged", but no flag is set.
 
@@ -155,8 +155,9 @@ Piotr: the metric needs improving, with three components. Proposal: compute each
 | Component | Per-event value | Flag when | Source |
 |---|---|---|---|
 | **Mutation support** | `n_support` = `num_cn2` of the supporting cluster (max over the event's regions); also `stability` / `q_value` from the bootstrap summary | `n_support < N_MIN` (e.g. 10, TBD). Ploidy-only events have no mutation evidence and are flagged `no_mut_support` | `pgdd_mut_counts`, `pgdd_bootstrap_discovery_summary` |
-| **Borderline ploidy** | `ploidy_margin` = min over the event's regions of (fraction of genome with major CN ≥ 2) − 0.5. For a second GD the fraction uses major CN ≥ 3. This is the "Bielski fraction" of `[48]` | `ploidy_margin < M_MIN` (e.g. 0.05–0.10, so 55% doubled is borderline). Arguably also check the regions *without* the event: 45% is a borderline "no". | Not in the PGDD outputs: PGDD takes `num_gds` as an input (threshold ≥ 50% with major CN ≥ 2, `R/parrallel_gd_caller.R:45–50`). Needs the per-sample fraction from the PGDD input preparation or the ASCAT segments. |
-| **GD order** | `gd_order` = 1 for a first GD, 2 for a second, 3 for a third, counted along the root→leaf lineage | `gd_order ≥ 2`, stronger penalty for 3 | Our placement (03) |
+| **Borderline ploidy** | `ploidy_margin` = min over the event's regions of (fraction of genome with major CN ≥ 2) − 0.5. For a second GD the fraction uses major CN ≥ 3. This is the "Bielski fraction" of `[48]` | `ploidy_margin < M_MIN` (e.g. 0.05–0.10, so 55% doubled is borderline). Arguably also check the regions *without* the event: 45% is a borderline "no". | Not in the PGDD outputs: PGDD takes `num_gds` as an input. Source (2026-11-09): step 00 computes it from the MSAI-adjusted segments (`frac_maj_ge2/3/4`), and step 03 writes it per sample as `genome_frac_nMaj2/3/4` in `pgdd_cohort_gd_summary.tsv`. |
+| **Parent–child multi-cluster** | `multicluster_parent_child` = the event's PGDD clusters include a direct parent–child pair (placed on the child, E) | always (wrong cluster split, or an unseen second GD in the child) | `pgdd_GD_events.clusters` + ALPACA tree |
+| **GD order** | `gd_order` = 1 for a first GD, 2 for a second, 3 for a third, counted along the root→leaf lineage | `gd_order ≥ 2`, stronger penalty for 3 | Our placement (04) |
 
 Combining: event quality = `High` with no flags, `Medium` with one, `Low` with two or more (or with `no_mut_support` plus `borderline_ploidy`). Tumour quality = the worst event, but the per-event flags are kept so users can filter on the reason. Thresholds `N_MIN` and `M_MIN` are open (section 7, reminder 4).
 
@@ -166,10 +167,10 @@ Combining: event quality = `High` with no flags, `Medium` with one, `Low` with t
 |---|---|
 | A. QC | not yet. It needs the QC table and CONIPHER `clusterInfo`, or tx_data equivalents. |
 | (implicit) | **02** pruning: off-tree clusters and tumours without a tree. The notebook never handles off-tree clusters explicitly. `get_descendants` on an off-tree clone just returns `[]`. |
-| B. triage | 03, derived from `events_pruned.support` rather than PGDD's per-tumour flags |
-| E, F, G, C | 03 placement |
-| H, I | 04 checks against ALPACA |
-| J, K | 05 integrated table |
+| B. triage | 04, derived from `events_pruned.support` rather than PGDD's per-tumour flags |
+| E, F, G, C | 04 placement |
+| H, I | 05 checks against ALPACA |
+| J, K | 06 integrated table |
 
 ## 5. Things probably not to replicate
 
@@ -201,10 +202,10 @@ Combining: event quality = `High` with no flags, `Medium` with one, `Low` with t
 ## 6. Decisions (answered by Piotr 2026-11-07 unless marked open)
 
 1. **QC (A).** ✅ Keep both the manual-QC `FINALIZED` filter and the truncal-CCF > 0.9 filter, sourced from tx_data.
-2. **ALPACA `wgd_ratio_scores.csv`.** ✅ Generated by ALPACA (`alpaca wgd`); add it to tx_data. In progress (tx_data draft PR). The 1.5 threshold for the new ALPACA is still open.
-3. **Multi-cluster events (E).** ✅ For now follow the code (child), not the comment. Reminder 1. Non-adjacent pairs and > 2 clusters: open.
+2. **ALPACA `wgd_ratio_scores.csv`.** ✅ Generated by ALPACA (`alpaca wgd`); in tx_data as `alpaca_wgd_ratios` (draft PR #7). Path `tracerx_842/ALPACA/output/tumour_results/<tumour>/wgd_ratio_scores.csv`, 12 columns, consistent with `all_tumours_combined.csv` (Piotr, 2026-11-09). **Score = `max(ratio_A, ratio_B)`** (2026-11-09): after a doubling, tumours accumulate losses, which show in the minor allele; with phased data B is not always the minor allele. The 1.5 threshold for the new ALPACA is still open.
+3. **Multi-cluster events (E).** ✅ Parent–child pair → the **child**, with a quality penalty (Piotr, 2026-11-09; reasoning in E). Non-adjacent pairs and > 2 clusters: open.
 4. **Ploidy-only placement (C vs G, multi-sample events).** ⏸ Later, decided on a few worked examples (reminder 3).
-5. **wgd_viewer in the loop / step 05 format.** ⏸ Last.
+5. **wgd_viewer in the loop / step 06 format.** ⏸ Last.
 6. **Second GDs.** Open (they were skipped entirely in G).
 7. **Triage classes (B).** Open: keep the four, or the placeholder's `clonal_wgd / mut_supported / ploidy_only / no_wgd` plus our `ploidy_only_pruned`.
 8. **Quality (K).** Open: draft proposal in K'.
@@ -213,7 +214,8 @@ Combining: event quality = `High` with no flags, `Medium` with one, `Low` with t
 
 | # | What | Who | Status |
 |---|---|---|---|
-| 1 | Multi-cluster events (E): check real output to establish whether the event belongs on the parent or the child. Until then the code's behaviour (child) is used. | Piotr | ⏰ open |
-| 2 | ALPACA ratio threshold: is 1.5 still right for the new ALPACA (and now that `ratio_B` / `ratio_total` exist)? | Piotr | open |
+| 1 | Multi-cluster events (E): parent or child? | Piotr | ✅ child + quality penalty (2026-11-09) |
+| 2 | ALPACA ratio threshold: is 1.5 still right for the new ALPACA, now applied to `max(ratio_A, ratio_B)`? | Piotr | score ✅ max(A,B); threshold open |
 | 3 | Ploidy-only placement rule: pick a few real tumours and decide C vs G, and multi-sample events. | Piotr + Darwin | later |
-| 4 | Quality thresholds `N_MIN`, `M_MIN`, and a source for the per-sample doubled-genome fraction. | Piotr | open |
+| 4 | Quality thresholds `N_MIN`, `M_MIN`. (Source of the per-sample doubled-genome fraction ✅: steps 00/03.) | Piotr | open |
+| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr | Piotr to reply |

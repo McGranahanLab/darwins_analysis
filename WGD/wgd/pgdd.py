@@ -49,6 +49,27 @@ STRING_COLS = {
 }
 
 
+# Settings Piotr runs PGDD with (2026-11-09). Thresholds are recorded per row in
+# pgdd_mut_counts.tsv, bootstrap settings in pgdd_bootstrap_discovery_settings.tsv.
+# check_mut_cpn_2_threshold must be passed explicitly: its default (NULL) falls
+# back to the discovery value, 1.5.
+EXPECTED_SETTINGS = {
+    "discover_mut_cpn_2_threshold": 1.5,
+    "check_mut_cpn_2_threshold": 1.25,
+    "discover_num_muts_threshold": 10,
+    "discover_frac_2_cpn_muts_threshold": 0.25,
+    "check_frac_2_cpn_muts_threshold": 0.1,
+    "discover_num_2_cpn_muts_threshold": 5,
+    "check_num_2_cpn_muts_threshold": 3,
+    "n_boot": 500,
+    "seed": 1,
+    "stability_threshold": 0.7,
+    "stability_alpha": 0.05,
+    "stability_use_binom_test": True,
+    "stability_adjust_method": "BH",
+}
+
+
 def pgdd_dir(nemo_root: Path) -> Path:
     """Re-root the Nemo PGDD directory under `nemo_root` (`/nemo` on the HPC, `nemo_mock` locally)."""
     return Path(nemo_root) / PGDD_NEMO_DIR.relative_to("/nemo")
@@ -129,3 +150,22 @@ def summarise(pgdd: dict[str, pl.DataFrame]) -> dict[str, int]:
         "multi_cluster_events": ev.filter(pl.col("clusters").str.contains(",", literal=True)).height,
         "event_cluster_rows": ec.filter(pl.col("cluster_id").is_not_null()).height,
     }
+
+
+def check_settings(pgdd: dict[str, pl.DataFrame]) -> dict[str, dict]:
+    """Settings of this run that differ from EXPECTED_SETTINGS: {name: {"expected", "found"}}.
+
+    A setting absent from the outputs is reported with found = None.
+    """
+    found: dict[str, list] = {}
+    for key in ("mut_counts", "settings"):
+        df = pgdd[key]
+        for name in EXPECTED_SETTINGS:
+            if name in df.columns:
+                found[name] = df[name].drop_nulls().unique().to_list()
+    diff = {}
+    for name, expected in EXPECTED_SETTINGS.items():
+        values = found.get(name)
+        if values != [expected]:
+            diff[name] = {"expected": expected, "found": values}
+    return diff

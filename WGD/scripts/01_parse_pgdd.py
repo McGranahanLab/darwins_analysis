@@ -47,12 +47,16 @@ def main() -> None:
     pgdd.region_clusters(tables["regions"]).write_parquet(out / "pgdd_region_clusters.parquet")
 
     summary = pgdd.summarise(tables)
+    settings_diff = pgdd.check_settings(tables)
     run = {
         "pgdd_dir": str(directory),
         "settings": tables["settings"].to_dicts()[0],
+        "settings_differing_from_expected": settings_diff,
         "summary": summary,
     }
     (out / "run.json").write_text(json.dumps(run, indent=2, default=str) + "\n")
+    for name, d in settings_diff.items():
+        print(f"WARNING: PGDD {name} = {d['found']}, expected {d['expected']}")
     for k, v in summary.items():
         print(f"{k:>26}: {v}")
     print(f"wrote {out}")
