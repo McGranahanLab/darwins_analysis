@@ -225,6 +225,7 @@ def test_compare():
                      "quality", "status", "class", "sub_class")
     s = compare.compare(old, new)["summary"]
     assert s["placement_match"] == {"match": 1, "of": 1} and s["class_match"]["match"] == 1
+    assert s["placement_match_by_new_status"] == {"resolved": {"match": 1, "of": 1}}
     moved = old.with_columns(pl.when(pl.col("clone") == "clone1").then(0).when(pl.col("clone") == "clone2").then(1)
                              .otherwise(0).alias("number_of_gds_at_clone"))
     r = compare.compare(moved, new)
@@ -259,3 +260,21 @@ def test_qc_pass_reads_na(tmp_path):
     f.write_text("clusterID\ttruncal\ttreeClust\tSAMPLE\tmeanCCF\n1\tTRUE\tTRUE\tR1\tNA\n")
     with pytest.raises(ValueError, match="missing meanCCF"):
         placement.qc_pass(qc, tmp_path)
+
+
+def test_ltx0025_like_greedy_case():
+    """Real case (Piotr, 2026-11-09): clonal GD + two more GDs in R4 (clones 3, 5 only).
+    Correct: 2 GDs on clone3. Notebook rule C picks clone3 (1.48) then clone2 (1.41),
+    because a clone already taken can't be reused; both < 1.5, so the tumour is unresolved."""
+    parent = {"clone6": "clone2", "clone2": "clone1", "clone3": "clone2", "clone1": "diploid",
+              "clone4": "clone6", "clone7": "clone1", "clone5": "clone3"}
+    ra = {"clone6": 1.0, "clone2": 1.406, "clone3": 1.485, "clone1": 1.948, "clone4": 0.96, "clone7": 1.0, "clone5": 1.05}
+    rt = pl.DataFrame({"tumour_id": [T] * 7, "clone": list(parent), "parent": list(parent.values()),
+                       "ratio_A": [ra[c] for c in parent], "ratio_B": [1.0] * 7})
+    cp = {"R1": {"clone7": 1.0}, "R2": {"clone4": 0.62, "clone6": 0.38}, "R4": {"clone3": 0.6, "clone5": 0.4}}
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": cp[s].get(c, 0.0)}
+                         for s in cp for c in parent])
+    ev = events((True, False, None, ["R1", "R2", "R4"]), (False, False, None, ["R4"]), (False, False, None, ["R4"]))
+    res = placement.place_events(ev, tumour("Clonal", 2, n_second=1, n_clonal=1), mut_counts(), rt, cpdf)
+    assert placed(res) == ["clonal_clone1", "alpaca_clone3", "alpaca_clone2"]
+    assert res.tumours["status"].item() == "unresolved"

@@ -68,6 +68,11 @@ def compare(old: pl.DataFrame, new: pl.DataFrame) -> dict[str, pl.DataFrame | di
         "tumours_only_old": sorted(old_t - new_t), "tumours_only_new": sorted(new_t - old_t),
         "placement_match": rate("placement_match"),
         **{f"{f}_match": rate(f"{f}_match") for f in fields},
+        # status_new = resolved: the notebook decided automatically, so these must match.
+        # unresolved: the old flow sent them to manual review in wgd_viewer; differences are expected.
+        "placement_match_by_new_status": {
+            str(st): {"match": int(g["placement_match"].sum()), "of": g.height}
+            for (st,), g in per_tumour.group_by("status_new")},
         "placement_match_by_old_class": {
             str(c): {"match": int(g["placement_match"].sum()), "of": g.height}
             for (c,), g in per_tumour.group_by("class_old")},
