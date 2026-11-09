@@ -236,3 +236,18 @@ def test_sample_key():
     assert placement.sample_key("LTX0001_SU_T1.R1--ab12") == "LTX0001_SU_T1-R1"
     with pytest.raises(ValueError, match="not in clone_proportions"):
         run(events((False, False, None, ["R9"])))
+
+
+def test_qc_pass_reads_na(tmp_path):
+    qc = tmp_path / "qc.tsv"
+    qc.write_text("patient\ttumour_id\tselected_solution\tFINALIZED\n"
+                  "LTX0901\t1\tTRUE\tTRUE\nLTX0902\t1\tTRUE\tTRUE\nLTX0903\t1\tTRUE\tFALSE\n")
+    for p, ccf in (("LTX0901", "103"), ("LTX0902", "0.5")):
+        d = tmp_path / p / "mutation_trees" / "tumour_1"
+        d.mkdir(parents=True)
+        (d / "clusterInfo.txt").write_text(
+            "clusterID\ttruncal\ttreeClust\tSAMPLE\tmeanCCF\n"
+            f"1\tTRUE\tTRUE\tR1\t{ccf}\n1\tTRUE\tTRUE\tR2\tNA\n2\tNA\tNA\tR1\tNA\n2\tFALSE\tTRUE\tR1\t0\n")
+    tx_qc, passed = placement.qc_pass(qc, tmp_path)
+    assert tx_qc == {"LTX0901-Tumour1", "LTX0902-Tumour1"}
+    assert passed == {"LTX0901-Tumour1"}

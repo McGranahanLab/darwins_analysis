@@ -139,7 +139,10 @@ def qc_pass(qc_table: Path, release_dir: Path, ccf_threshold: float = 0.9) -> tu
         f = Path(release_dir) / patient / "mutation_trees" / f"tumour_{tumour.replace('Tumour', '')}" / "clusterInfo.txt"
         if not f.exists():
             continue  # as in the notebook: no clusterInfo -> not passed
-        ci = pl.read_csv(f, separator="\t", infer_schema_length=None).drop_nulls(["treeClust", "truncal"])
+        # pandas (notebook) reads "NA" as missing; polars needs it spelled out, or meanCCF becomes a string
+        ci = (pl.read_csv(f, separator="\t", infer_schema_length=None, null_values=["NA", "NaN", ""])
+                .drop_nulls(["treeClust", "truncal"])
+                .with_columns(pl.col("meanCCF").cast(pl.Float64, strict=False)))
         as_bool = lambda c: pl.col(c).cast(pl.Utf8).str.to_lowercase().is_in(["true", "1"])  # noqa: E731
         trunk = ci.filter(as_bool("treeClust") & as_bool("truncal"))
         if trunk.height and trunk["meanCCF"].min() > ccf_threshold:
