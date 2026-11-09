@@ -209,7 +209,7 @@ The notebook's automatic rules are ported as is in `wgd/placement.py` (step 04) 
    ```
    The truth is GD1 on c2 and GD2 on c4. The old rule picks E1 from {c2, c4, c5} → **c4** (2.05 > 1.95), then E2 from {c4, c2} minus c4 → c2. That gives the first GD on c4, which doesn't cover R2, and the second GD on its ancestor. Both placements are impossible, yet the tumour is called `resolved` (both > 1.5). Processing E2 first happens to give the right answer, so order matters as well.
 
-   **Status (Piotr, 2026-11-09): deferred.** The pipeline is first tested on real data with the previous rule (C) reproduced as is. The ideas and concerns below are for a later improvement pass.
+   **Status:** deferred at first, so the pipeline could be tested on real data with the old rule (C). **Implemented for C on 2026-11-09** after the real case LTX0025 (Piotr): see "Feasible-set rule C" below. G (ploidy-only events inside mutation-supported tumours) still uses the old rule.
 
    Concerns with the current rule, in short:
    - **Coverage is not checked.** The chosen clone may not be ancestral to all of the event's regions.
@@ -235,6 +235,19 @@ The notebook's automatic rules are ported as is in `wgd/placement.py` (step 04) 
 9. **State tracking through string prefixes** (`alpaca_`, `clonal_`, `multicluster_`, `ploidy_`, `false_call`, `reversion_`) packed into `clusters`, plus several `events_df` copies. We'll use explicit columns (`placed_clone`, `placement_method`, `flags`).
 10. **Hard-coded tumour lists, side-effect writes to shared queue files, and `which_q` lookups.** These are interactive scaffolding.
 11. **`gd_p_value` and the hypergeometric 2×2 tables.** We don't use the hypergeometric test any more. The current run keeps only bootstrap-stable calls (section D).
+
+### Feasible-set rule C (step 04 default since 2026-11-09; `--ploidy-rule notebook` restores the old rule)
+
+For tumours without mutation support, each subclonal PGDD event is placed using the tree and clone proportions first:
+1. A clone is **feasible** if its subtree makes up **more than 50%** of every sample carrying the event (the doubling explains the doubled samples) and **at most 50%** of every other sample of the tumour (it doesn't reach undoubled samples). The tumour's samples come from `pgdd_GDs_per_region`.
+2. Exactly one feasible clone → place the event there (`placement_method = unique`).
+3. Several (a chain of single-child clones) → the highest ALPACA score among them (`ratio`).
+4. None → `no_feasible_clone`, the event is unplaced.
+5. Clones can be reused: events with the same samples (e.g. a second and a third GD in one region) can sit on the same clone, giving `number_of_gds_at_clone = 2`.
+6. **Status:** `resolved` when every event is `unique`, or picked by a ratio above 1.5; otherwise `unresolved`.
+7. The H check (GDs on a path vs sample ploidy) counts events, not distinct clones, under this rule.
+
+**LTX0025-T1** (the case that prompted this): one clonal GD, then GD2 and GD3, both only in R4 (`genome_frac_nMaj3/4` > 0.5). R4 = clone3 (0.6) + clone5 (0.4). clone2 is excluded because its subtree (clone4, clone6) is all of R2, which has one GD. clone5 is only 40% of R4. So clone3 is the only feasible clone, and it takes both GDs. Old rule: clone3 (1.48), then clone2 (1.41, because clone3 was taken), unresolved, fixed by hand. New rule: clone1 = 1, clone3 = 2, resolved. Replayed from the real PGDD files.
 
 ## 5b. ALPACA ratio threshold: concerns (Darwin, 2026-11-09; revisit later, 1.5 in use)
 
@@ -270,5 +283,5 @@ Checks once real data exist:
 | 2 | ALPACA ratio threshold: is 1.5 still right for the new ALPACA, now applied to `max(ratio_A, ratio_B)`? | Piotr | score ✅ max(A,B); threshold open |
 | 3 | Ploidy-only placement rule: pick a few real tumours and decide C vs G, and multi-sample events. | Piotr + Darwin | later |
 | 4 | Quality thresholds `N_MIN`, `M_MIN`. (Source of the per-sample doubled-genome fraction ✅: steps 00/03.) | Piotr | open |
-| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr + Darwin | example corrected 2026-11-09; feasible-set rule documented. **Deferred:** test on real data with the previous rule first |
+| 5 | Greedy ALPACA assignment (section 5, item 1). | Piotr + Darwin | ✅ feasible-set rule C implemented 2026-11-09 (LTX0025); G still old |
 | 6 | ALPACA threshold concerns (section 5b). | Piotr | revisit later; 1.5 in use |
