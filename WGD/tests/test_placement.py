@@ -352,3 +352,27 @@ def test_fill_resolution_and_status():
               tumour("Clonal", 1, n_clonal=1), ploidy_rule="fill", regions=reg2)
     assert sorted(placed(res)[2:]) == ["fill_clone3", "fill_clone4"]
     assert res.tumours["status"].item() == "resolved"
+
+
+def test_ltx0501_prefers_ancestral_clone_without_overdoubling():
+    """Real case (Piotr, 2026-11-10): mutation-supported GD on clone4 (R1); PGDD's ploidy-only
+    GD1 covers R2 + R3. Correct (old, hand-curated): clone4, clone5, clone6. clone9 would also
+    raise R2, but clone6 additionally doubles its 8% share of R1, which is at 1 GD already."""
+    parent = {"clone8": "clone7", "clone1": "diploid", "clone4": "clone1", "clone7": "clone9", "clone5": "clone1",
+              "clone3": "clone4", "clone9": "clone6", "clone2": "clone5", "clone6": "clone1"}
+    ra = {"clone8": 0.954, "clone1": 1.947, "clone4": 1.115, "clone7": 1.008, "clone5": 1.011, "clone3": 0.986,
+          "clone9": 1.053, "clone2": 0.928, "clone6": 1.030}
+    rt = pl.DataFrame({"tumour_id": [T] * 9, "clone": list(parent), "parent": list(parent.values()),
+                       "ratio_A": [ra[c] for c in parent], "ratio_B": [1.0] * 9})
+    cp = {"R1": {"clone3": 0.2, "clone4": 0.7174, "clone6": 0.0826}, "R2": {"clone7": 0.32, "clone8": 0.34, "clone9": 0.34},
+          "R3": {"clone2": 0.39, "clone5": 0.61}}
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": cp[s].get(c, 0.0)}
+                         for s in cp for c in parent])
+    ev = events((False, False, None, ["R2", "R3"]), (False, True, "4", ["R1"]))
+    tu = tumour("Subclonal", 2)
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 1})
+    res = placement.place_events(ev, tu, mut_counts(c4=12), rt, cpdf, ploidy_rule="fill", regions=reg)
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    assert {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v} == {"clone4": 1, "clone5": 1, "clone6": 1}
+    assert res.tumours["status"].item() == "resolved"
+    assert tb["sub_class"][0] == "parallel only"

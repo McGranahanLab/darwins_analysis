@@ -205,6 +205,15 @@ def sample_levels(tree: Tree, props: dict[str, dict[str, float]], gds: dict[str,
     return out
 
 
+def _cell_fit(tree: Tree, props: dict[str, dict[str, float]], targets: dict[str, int],
+              gds: dict[str, int]) -> tuple[float, float]:
+    """(cells with more GDs than their sample's target, cells exactly at it), summed over samples."""
+    count = {c: sum(gds.get(a, 0) for a in [c] + tree.ancestors(c)) for c in tree.parent}
+    over = sum(v for s, p in props.items() for c, v in p.items() if count.get(c, 0) > targets[s])
+    at = sum(v for s, p in props.items() for c, v in p.items() if count.get(c, 0) == targets[s])
+    return over, at
+
+
 @dataclass
 class Fill:
     added: list[dict]            # one per added GD: clone, samples raised, spill, tie info
@@ -216,10 +225,18 @@ def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[st
                 fixed: dict[str, int], score: dict[str, float], majority: float = MAJORITY) -> Fill:
     """Add GDs until every sample's level reaches its PGDD `num_gds`, never exceeding it.
 
-    Each step adds one GD on the clone that (1) raises the most samples that still
-    need a GD, without raising any sample past its target; (2) covers the fewest
-    cells in samples it doesn't raise (spill); (3) has the highest ALPACA score;
-    (4) comes first in the tree. A clone can take several GDs.
+    Each step adds one GD on the clone that
+      (1) raises the most samples that still need a GD, without raising any sample
+          past its target;
+      (2) leaves the fewest cells *above* their sample's target (`over_cells`): a GD
+          must not over-double clones in samples that already have enough
+          (LTX0073: clone14, not clone5, which would put clone12 in R4 at 3 GDs vs 2);
+      (3) leaves the most cells exactly *at* their sample's target (`at_target`): with
+          (2) equal, prefer the more ancestral clone that also doubles minor clones of
+          already-doubled samples (LTX0501: clone6, not clone9, as clone6 is 8% of R1,
+          which is at 1 GD through clone4);
+      (4) has the highest ALPACA score; (5) comes first in the tree.
+    Cell fractions are summed over samples. A clone can take several GDs.
     """
     gds = dict(fixed)
     lv = sample_levels(tree, props, gds, majority)
@@ -235,19 +252,18 @@ def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[st
             raised = {s for s in props if trial[s] > lv[s]}
             if not raised or any(trial[s] > max(targets[s], lv[s]) for s in raised):
                 continue
-            sub = set(tree.subtree(c))
-            spill = sum(v for s in props if s not in raised for k, v in props[s].items() if k in sub)
+            over_cells, at_target = _cell_fit(tree, props, targets, {**gds, c: gds.get(c, 0) + 1})
             sc = score.get(c)
             sc = -np.inf if sc is None or np.isnan(sc) else sc
-            cands.append((-len(raised), round(spill, 9), -sc, c, raised))
+            cands.append((-len(raised), round(over_cells, 9), -round(at_target, 9), -sc, c, raised))
         if not cands:
             break
-        cands.sort(key=lambda x: x[:3])  # stable: ties keep tree order
+        cands.sort(key=lambda x: x[:4])  # stable: ties keep tree order
         best = cands[0]
-        tied_on_spill = [x[3] for x in cands if x[:2] == best[:2]]
-        gds[best[3]] = gds.get(best[3], 0) + 1
-        added.append({"clone": best[3], "samples": sorted(best[4]), "spill": best[1],
-                      "alternatives": [c for c in tied_on_spill if c != best[3]]})
+        tied = [x[4] for x in cands if x[:3] == best[:3]]  # only the ALPACA score (or tree order) separated these
+        gds[best[4]] = gds.get(best[4], 0) + 1
+        added.append({"clone": best[4], "samples": sorted(best[5]), "over_cells": best[1], "at_target": -best[2],
+                      "alternatives": [c for c in tied if c != best[4]]})
         lv = sample_levels(tree, props, gds, majority)
     remaining = {s: targets[s] - lv[s] for s in props if lv[s] < targets[s]}
     return Fill(added, remaining, over)
