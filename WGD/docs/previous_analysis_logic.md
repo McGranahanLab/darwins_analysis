@@ -161,6 +161,7 @@ Step 04 computes `quality` in [0, 1] per tumour, as the product of factors (`wgd
   - `reversion` 0.2: a clone below a doubled clone has median ALPACA total CN ≤ 2.
   - `ploidy_path_mismatch` 0.5, `unplaced_events` 0.5, `multicluster_parent_child` 0.7, `fill_tie` 0.8, `fill_count_differs` 0.9.
 - **The old K rule** (cohort 5th percentile of supporting counts) is dropped.
+- **Status:** defaults accepted as a starting point (Piotr, 2026-11-10). Weights and thresholds are tuned later on the cohort. Open questions: whether `alpaca_disagrees` is informative for subclonal GDs (real subclonal GD clones show ratios of 1.0–1.3), and whether `borderline_ploidy` should look only at the first GD level (LTX0025 and LTX0073 score low because of one sample about 0.03–0.04 from 0.5 on a deeper level).
 
 #### K'. Proposed replacement quality (draft, 2026-11-07; superseded by K'')
 Piotr: the metric needs improving, with three components. Proposal: compute each component **per event**, keep them as columns, and derive the label from fixed thresholds (not cohort percentiles).
