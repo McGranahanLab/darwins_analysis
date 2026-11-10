@@ -211,19 +211,63 @@ def test_sub_class():
     assert final_table.sub_class(tree, ["clone2", "clone4", "clone3"]) == "parallel + sequential"
 
 
-def test_quality_low_supporting_count():
-    t2 = "LTX0902-Tumour1"
-    ev = pl.DataFrame({"tumour_id": [T, t2], "GD_event_id": ["a", "b"], "is_clonal": [False, False],
-                       "placed_as": ["4", "4"],
-                       "placed_clone": ["clone4", "clone4"], "supporting_mut_count": [3, 40]})
-    tu = pl.DataFrame({"tumour_id": [T, t2], "triage": ["mut_supported"] * 2, "status": ["unresolved"] * 2,
-                       "n_unplaced": [0, 0]})
-    rt = pl.concat([ratios(), ratios().with_columns(pl.lit(t2).alias("tumour_id"))])
-    pt = pl.DataFrame({"tumour_id": [T, t2], "num_clonal_gds": [0, 0]})
-    tb = final_table.build_table(ev, tu, pt, rt)
-    q = dict(tb.unique("tumour_id").select("tumour_id", "quality").iter_rows())
-    assert q == {T: "Low", t2: "High"}
-    assert tb.filter(pl.col("tumour_id") == T)["quality_code"][0] == "low_supporting_mut_count"
+def test_quality_helpers():
+    from wgd import quality as Q
+    assert Q.graded(0.0, 0.1) == 0.5 and Q.graded(0.05, 0.1) == 0.75 and Q.graded(0.3, 0.1) == 1.0
+    assert Q.graded(1.25, 1.5, 1.0) == 0.75
+    fr = {"a": (0.507, 0.095, 0.03), "b": (0.42, 0.07, 0.03), "c": (0.9, 0.2, 0.05)}
+    m = Q.ploidy_margins({"a": 1, "b": 0, "c": 1}, fr)
+    assert m == pytest.approx({"a": 0.007, "b": 0.08, "c": 0.3})
+    assert Q.flips({"a": 1, "b": 0, "c": 1}, fr, m) == [{"a": 0, "b": 0, "c": 1}, {"a": 1, "b": 1, "c": 1},
+                                                         {"a": 0, "b": 1, "c": 1}]
+    assert Q.score([("x", 0.5, "1"), ("y", 1.0, ""), ("z", 0.8, "")]) == (0.4, "x(1);z")
+
+
+def summary_df(t: str, fr: dict[str, tuple]) -> pl.DataFrame:
+    return pl.DataFrame({"tumour_id": [t] * len(fr), "sample_name_hash": [sample(s) for s in fr],
+                         "genome_frac_nMaj2": [v[0] for v in fr.values()], "genome_frac_nMaj3": [v[1] for v in fr.values()],
+                         "genome_frac_nMaj4": [v[2] for v in fr.values()],
+                         "num_gds": [int(v[0] > 0.5) for v in fr.values()]})
+
+
+def test_quality_borderline_and_ambiguous():
+    """LTX0535-like (Piotr, 2026-11-10): genome fractions all near 0.5. R1, R2 just above
+    (one subclonal GD on clone2); R3 at 0.49. Flipping R3 gives a clonal GD instead."""
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 0})
+    summ = summary_df(T, {"R1": (0.51, 0.1, 0.03), "R2": (0.53, 0.1, 0.03), "R3": (0.49, 0.1, 0.03)})
+    res = run(events((False, False, None, ["R1", "R2"])), ploidy_rule="fill", regions=reg, summary=summ,
+              rt=ratios(c2=2.0))
+    t = res.tumours.row(0, named=True)
+    assert placed(res)[-1] == "fill_clone2"
+    assert t["quality_code"].startswith("borderline_ploidy(0.010:R")
+    # R1 down -> clone5 (R2 only); R2 down -> clone4 (R1 only); R3 up -> one clonal GD
+    assert "ambiguous_solution(alt:clone5=1|clone4=1|clone1=1)" in t["quality_code"]
+    assert t["quality"] == pytest.approx(0.55 * 0.5, abs=1e-3)
+    tb = final_table.build_table(res.events, res.tumours, tumour(), ratios(c2=2.0))
+    assert tb["quality"].unique().to_list() == [t["quality"]]
+
+
+def test_quality_clear_case_and_reversion():
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 0})
+    summ = summary_df(T, {"R1": (0.95, 0.1, 0.03), "R2": (0.9, 0.1, 0.03), "R3": (0.1, 0.05, 0.0)})
+    kw = dict(ploidy_rule="fill", regions=reg, summary=summ, rt=ratios(c2=2.0))
+    res = run(events((False, False, None, ["R1", "R2"])), **kw)
+    assert res.tumours["quality"].item() == 1.0 and res.tumours["quality_code"].item() is None
+    # clone4 (below the doubled clone2) looks diploid again
+    cn = pl.DataFrame({"tumour_id": [T] * 4, "clone": ["clone2", "clone2", "clone4", "clone4"],
+                       "pred_CN_A": [2, 2, 1, 1], "pred_CN_B": [2, 2, 1, 1]})
+    res = run(events((False, False, None, ["R1", "R2"])), alpaca_cn=cn, **kw)
+    assert res.tumours["quality"].item() == 0.2 and res.tumours["quality_code"].item() == "reversion(clone4)"
+
+
+def test_quality_low_mut_support_and_alpaca():
+    reg = regions_df(T, {"R1": 1, "R2": 0, "R3": 0})
+    summ = summary_df(T, {"R1": (0.95, 0.1, 0.03), "R2": (0.1, 0.05, 0.0), "R3": (0.1, 0.05, 0.0)})
+    res = run(events((False, True, "4", ["R1"])), mc=mut_counts(c4=5), ploidy_rule="fill", regions=reg,
+              summary=summ, rt=ratios(c4=1.25))
+    q = res.tumours.row(0, named=True)
+    assert q["quality_code"] == "low_mut_support(5);alpaca_disagrees(1.25:clone4)"
+    assert q["quality"] == pytest.approx(0.75 * 0.75, abs=1e-3)
 
 
 def test_compare():
@@ -352,3 +396,27 @@ def test_fill_resolution_and_status():
               tumour("Clonal", 1, n_clonal=1), ploidy_rule="fill", regions=reg2)
     assert sorted(placed(res)[2:]) == ["fill_clone3", "fill_clone4"]
     assert res.tumours["status"].item() == "resolved"
+
+
+def test_ltx0501_prefers_ancestral_clone_without_overdoubling():
+    """Real case (Piotr, 2026-11-10): mutation-supported GD on clone4 (R1); PGDD's ploidy-only
+    GD1 covers R2 + R3. Correct (old, hand-curated): clone4, clone5, clone6. clone9 would also
+    raise R2, but clone6 additionally doubles its 8% share of R1, which is at 1 GD already."""
+    parent = {"clone8": "clone7", "clone1": "diploid", "clone4": "clone1", "clone7": "clone9", "clone5": "clone1",
+              "clone3": "clone4", "clone9": "clone6", "clone2": "clone5", "clone6": "clone1"}
+    ra = {"clone8": 0.954, "clone1": 1.947, "clone4": 1.115, "clone7": 1.008, "clone5": 1.011, "clone3": 0.986,
+          "clone9": 1.053, "clone2": 0.928, "clone6": 1.030}
+    rt = pl.DataFrame({"tumour_id": [T] * 9, "clone": list(parent), "parent": list(parent.values()),
+                       "ratio_A": [ra[c] for c in parent], "ratio_B": [1.0] * 9})
+    cp = {"R1": {"clone3": 0.2, "clone4": 0.7174, "clone6": 0.0826}, "R2": {"clone7": 0.32, "clone8": 0.34, "clone9": 0.34},
+          "R3": {"clone2": 0.39, "clone5": 0.61}}
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": cp[s].get(c, 0.0)}
+                         for s in cp for c in parent])
+    ev = events((False, False, None, ["R2", "R3"]), (False, True, "4", ["R1"]))
+    tu = tumour("Subclonal", 2)
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 1})
+    res = placement.place_events(ev, tu, mut_counts(c4=12), rt, cpdf, ploidy_rule="fill", regions=reg)
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    assert {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v} == {"clone4": 1, "clone5": 1, "clone6": 1}
+    assert res.tumours["status"].item() == "resolved"
+    assert tb["sub_class"][0] == "parallel only"

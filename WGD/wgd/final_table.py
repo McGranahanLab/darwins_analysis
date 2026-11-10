@@ -16,10 +16,8 @@ One row per ALPACA clone of every QC-passed PGDD tumour:
   for ploidy_only / mut_supported tumours with every event placed:
   `single subclonal GD`, `parallel only`, `sequential only` or `parallel + sequential`
   over the subclonal GD clones. Null otherwise.
-* quality (notebook [53]-[57]): start at 1 (the viewer's manual quality is not
-  available); a tumour with any clone whose supporting mutation count is
-  <= the cohort 5th percentile gets 0.5; tumour minimum; < 1 -> Low.
-  quality_code says why (`low_supporting_mut_count`).
+* quality: per-tumour score in [0, 1] from step 04 (wgd.quality); quality_code
+  lists the factors that lowered it.
 * n_unplaced_events: events with no clone, or placed on a PGDD cluster that is
   not an ALPACA clone (they add no GD to any row).
 """
@@ -28,7 +26,6 @@ from __future__ import annotations
 
 from itertools import combinations
 
-import numpy as np
 import polars as pl
 
 from wgd.placement import Tree
@@ -59,15 +56,6 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
     num_clonal = dict(pgdd_tumours.select("tumour_id", "num_clonal_gds").iter_rows())
     ev = {t: g for (t,), g in events.group_by("tumour_id")} if events.height else {}
 
-    # quality, notebook [54]-[56]: 5th percentile of per-clone supporting counts across the cohort
-    counts = (events.filter(pl.col("supporting_mut_count").is_not_null() & pl.col("placed_clone").is_not_null())
-                    .select("tumour_id", pl.col("placed_clone").alias("clone"), "supporting_mut_count")
-              if events.height and "supporting_mut_count" in events.columns else pl.DataFrame())
-    low_tumours = set()
-    if counts.height:
-        q05 = float(np.quantile(counts["supporting_mut_count"].to_numpy(), 0.05))
-        low_tumours = set(counts.filter(pl.col("supporting_mut_count") <= q05)["tumour_id"])
-
     rows = []
     for r in tumours.iter_rows(named=True):
         t = r["tumour_id"]
@@ -93,16 +81,15 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
                     subclonal.append(c)
         sc = (sub_class(tree, subclonal) if r["triage"] in ("alpaca_called", "mut_supported")
               and unplaced == 0 else None)
-        low = t in low_tumours
         for clone, parent in tree.parent.items():
             rows.append({
                 "tumour_id": t, "clone": clone, "parent": parent,
                 "number_of_gds_at_clone": n_at[clone], "total_gds_per_tumour": sum(n_at.values()),
-                "quality": "Low" if low else "High", "status": r["status"], "class": CLASS[r["triage"]],
-                "sub_class": sc, "quality_code": "low_supporting_mut_count" if low else None,
+                "quality": r.get("quality"), "status": r["status"], "class": CLASS[r["triage"]],
+                "sub_class": sc, "quality_code": r.get("quality_code"),
                 "n_unplaced_events": unplaced,
             })
     schema = {"tumour_id": pl.Utf8, "clone": pl.Utf8, "parent": pl.Utf8, "number_of_gds_at_clone": pl.Int64,
-              "total_gds_per_tumour": pl.Int64, "quality": pl.Utf8, "status": pl.Utf8, "class": pl.Utf8,
+              "total_gds_per_tumour": pl.Int64, "quality": pl.Float64, "status": pl.Utf8, "class": pl.Utf8,
               "sub_class": pl.Utf8, "quality_code": pl.Utf8, "n_unplaced_events": pl.Int64}
     return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone")
