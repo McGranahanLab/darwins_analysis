@@ -65,7 +65,7 @@ def strip_clone(clusters: str | None) -> str | None:
 
 def clone_of(label: str | None) -> str | None:
     """Clone a notebook label points to, or None if the event is not placed."""
-    if label is None or label in ("false_call", "alpaca_None", "no_feasible_clone"):
+    if label is None or label in ("false_call", "alpaca_None", "superseded_by_fill"):
         return None
     if "_" in label:
         return label.split("_", 1)[1]
@@ -185,25 +185,72 @@ def triage(tumours: pl.DataFrame, events: pl.DataFrame) -> dict[str, str]:
     return out
 
 
-# ---- C, feasible-set rule ------------------------------------------------------------
+# ---- ploidy fill (tumour-level rule replacing C and G) ---------------------------
 
-def feasible_clones(tree: Tree, props: dict[str, dict[str, float]], event_samples: list[str],
-                    all_samples: list[str], majority: float = MAJORITY) -> list[str]:
-    """Clones that can carry a subclonal event from tree + clone proportions alone.
+def sample_levels(tree: Tree, props: dict[str, dict[str, float]], gds: dict[str, int],
+                  majority: float = MAJORITY) -> dict[str, int]:
+    """GD level of each sample under a placement `gds` (clone -> number of GDs on it).
 
-    `props[sample][clone]` = proportion. A clone qualifies when its subtree makes up
-    more than `majority` of every event sample and at most `majority` of every other
-    sample of the tumour (the doubling must explain the doubled samples and must not
-    reach samples without it). Returned in tree (file) order.
+    A clone's count is the GDs on its root path. A sample's level is the largest k
+    such that clones with count >= k make up more than `majority` of the sample
+    (the sample-level analogue of PGDD's >= 50%-of-genome rule).
     """
-    others = [s for s in all_samples if s not in event_samples]
-    out = []
-    for c in tree.parent:
-        sub = set(tree.subtree(c))
-        frac = {s: sum(v for k, v in props.get(s, {}).items() if k in sub) for s in all_samples}
-        if all(frac.get(s, 0) > majority for s in event_samples) and all(frac.get(s, 0) <= majority for s in others):
-            out.append(c)
+    count = {c: sum(gds.get(a, 0) for a in [c] + tree.ancestors(c)) for c in tree.parent}
+    out = {}
+    for s, p in props.items():
+        k = 0
+        while sum(v for c, v in p.items() if count.get(c, 0) >= k + 1) > majority:
+            k += 1
+        out[s] = k
     return out
+
+
+@dataclass
+class Fill:
+    added: list[dict]            # one per added GD: clone, samples raised, spill, tie info
+    remaining: dict[str, int]    # sample -> GDs still missing
+    over: dict[str, int]         # sample -> GDs too many from the fixed (clonal + mutation) placement
+
+
+def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[str, int],
+                fixed: dict[str, int], score: dict[str, float], majority: float = MAJORITY) -> Fill:
+    """Add GDs until every sample's level reaches its PGDD `num_gds`, never exceeding it.
+
+    Each step adds one GD on the clone that (1) raises the most samples that still
+    need a GD, without raising any sample past its target; (2) covers the fewest
+    cells in samples it doesn't raise (spill); (3) has the highest ALPACA score;
+    (4) comes first in the tree. A clone can take several GDs.
+    """
+    gds = dict(fixed)
+    lv = sample_levels(tree, props, gds, majority)
+    over = {s: lv[s] - targets[s] for s in props if lv[s] > targets[s]}
+    added = []
+    for _ in range(sum(max(0, targets[s] - lv[s]) for s in props) + 1):
+        need = {s for s in props if lv[s] < targets[s]}
+        if not need:
+            break
+        cands = []
+        for c in tree.parent:
+            trial = sample_levels(tree, props, {**gds, c: gds.get(c, 0) + 1}, majority)
+            raised = {s for s in props if trial[s] > lv[s]}
+            if not raised or any(trial[s] > max(targets[s], lv[s]) for s in raised):
+                continue
+            sub = set(tree.subtree(c))
+            spill = sum(v for s in props if s not in raised for k, v in props[s].items() if k in sub)
+            sc = score.get(c)
+            sc = -np.inf if sc is None or np.isnan(sc) else sc
+            cands.append((-len(raised), round(spill, 9), -sc, c, raised))
+        if not cands:
+            break
+        cands.sort(key=lambda x: x[:3])  # stable: ties keep tree order
+        best = cands[0]
+        tied_on_spill = [x[3] for x in cands if x[:2] == best[:2]]
+        gds[best[3]] = gds.get(best[3], 0) + 1
+        added.append({"clone": best[3], "samples": sorted(best[4]), "spill": best[1],
+                      "alternatives": [c for c in tied_on_spill if c != best[3]]})
+        lv = sample_levels(tree, props, gds, majority)
+    remaining = {s: targets[s] - lv[s] for s in props if lv[s] < targets[s]}
+    return Fill(added, remaining, over)
 
 
 # ---- the pipeline ---------------------------------------------------------------
@@ -219,13 +266,13 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                  ratios: pl.DataFrame, clone_proportions: pl.DataFrame,
                  summary: pl.DataFrame | None = None, alpaca_cn: pl.DataFrame | None = None,
                  qc_tumours: set[str] | None = None, score: str = "ratio_A",
-                 ploidy_rule: str = "feasible", regions: pl.DataFrame | None = None) -> Placement:
+                 ploidy_rule: str = "fill", regions: pl.DataFrame | None = None) -> Placement:
     """Run stages B–I and K1 on QC-passed tumours.
 
-    `score`: ALPACA column used in C. `ploidy_rule`: `feasible` (default, 2026-11-09)
-    or `notebook` (the original greedy rule C, for comparison). `regions`
-    (pgdd_GDs_per_region) defines a tumour's samples for the feasible rule;
-    without it the clone_proportions samples are used.
+    `score`: ALPACA column used as a tie-breaker. `ploidy_rule`: `fill` (default,
+    2026-11-09) places ploidy-only GDs per tumour with `fill_ploidy`, replacing
+    rules C and G; `notebook` runs the original rules C and G. `regions`
+    (pgdd_GDs_per_region) gives each sample's target `num_gds`; required for `fill`.
     """
     log: list[str] = []
     if score == "max_AB":
@@ -248,7 +295,6 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
         e["placed_as"] = e["clusters"]
         e["alpaca_score"] = None
         e["placement_method"] = None
-        e["feasible_clones"] = None
         e["flags"] = []
 
     def clones_in_samples(tumour: str, samples: list[str]) -> list[str]:
@@ -262,41 +308,13 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
         tot = g.filter(pl.col("key").is_in(keys)).group_by("clone", maintain_order=True).agg(pl.col("proportion").sum())
         return tot.filter(pl.col("proportion") > 0)["clone"].to_list()
 
-    # C: alpaca_called tumours (no mutation support), subclonal events
-    tumour_samples = {}
-    if regions is not None:
-        for (t,), g in regions.group_by("tumour_id"):
-            tumour_samples[t] = sorted({sample_key(x) for x in g["sample_id"]})
-    for t in [t for t, c in tri.items() if c == "alpaca_called"]:
+    # C (notebook rule only; `fill` places these events after F, together with G's)
+    for t in ([t for t, c in tri.items() if c == "alpaca_called"] if ploidy_rule == "notebook" else []):
         tree = trees.get(t)
         if tree is None:
             log.append(f"C {t}: no ALPACA tree, skipped")
             continue
         sub_events = [e for e in ev if e["tumour_id"] == t and not e["is_clonal"]]
-        if ploidy_rule == "feasible":
-            g = cp_by_tumour.get(t)
-            props: dict[str, dict[str, float]] = {}
-            for k, c, v in (g.select("key", "clone", "proportion").iter_rows() if g is not None else []):
-                props.setdefault(k, {})[c] = v
-            samples_all = tumour_samples.get(t, sorted(props))
-            for e in sub_events:
-                ev_keys = [sample_key(x) for x in e["samples"].split(",")]
-                clones_in_samples(t, e["samples"].split(","))  # fail loudly on unknown samples
-                feas = feasible_clones(tree, props, ev_keys, samples_all)
-                e["feasible_clones"] = ",".join(feas) or None
-                if not feas:
-                    e["placed_as"], e["placement_method"] = "no_feasible_clone", "none"
-                    e["flags"].append("no_feasible_clone")
-                    continue
-                if len(feas) == 1:
-                    pick, method = feas[0], "unique"
-                else:  # a chain of clones fits: the ratio breaks the tie (reuse allowed)
-                    pick = max(feas, key=lambda c: -np.inf if ratio_rows.get((t, c)) is None
-                               or np.isnan(ratio_rows[(t, c)]) else ratio_rows[(t, c)])
-                    method = "ratio"
-                e["placed_as"], e["placement_method"] = f"feasible_{pick}", method
-                e["alpaca_score"] = ratio_rows.get((t, pick))
-            continue
         # notebook rule C: greedy, file order, a clone is used at most once, MRCA excluded
         cand_all = sorted(((c, ratio_rows[(t, c)]) for c, p in tree.parent.items() if p != "diploid"),
                           key=lambda x: -x[1] if x[1] is not None and not np.isnan(x[1]) else np.inf)
@@ -357,7 +375,7 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
 
     # G: subclonal events still without a label (snapshot of labels after C/E/F, as in the notebook)
     snapshot = {e["GD_event_id"]: e["placed_as"] for e in ev}
-    for e in ev:
+    for e in (ev if ploidy_rule == "notebook" else []):
         if e["is_clonal"] or snapshot[e["GD_event_id"]] is not None:
             continue
         t, eid = e["tumour_id"], e["GD_event_id"]
@@ -409,8 +427,60 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
         else:
             e["flags"].append("G_multiple_lineage_candidates")
 
+    # fill: per tumour, fix clonal + mutation-supported GDs, then add the fewest GDs that
+    # bring every sample to its PGDD num_gds. PGDD's ploidy-only events are superseded.
+    fill_info: dict[str, Fill | str] = {}
+    if ploidy_rule == "fill":
+        if regions is None:
+            raise ValueError("ploidy_rule='fill' needs `regions` (pgdd_GDs_per_region)")
+        targets_all = {}
+        for t, sid, n in regions.select("tumour_id", "sample_id", "num_gds").iter_rows():
+            targets_all.setdefault(t, {})[sample_key(sid)] = int(n)
+        template = {k: None for k in ev[0]} if ev else {}
+        for t in [t for t, c in tri.items() if c in ("alpaca_called", "mut_supported")]:
+            tree = trees.get(t)
+            te = [e for e in ev if e["tumour_id"] == t]
+            ploidy_ev = [e for e in te if not e["is_clonal"] and e["placed_as"] is None]
+            fixed_ev = [e for e in te if e not in ploidy_ev]
+            if tree is None:
+                fill_info[t] = "no_alpaca_tree"
+                continue
+            if any(clone_of(e["placed_as"]) not in tree.parent for e in fixed_ev):
+                fill_info[t] = "fixed_event_not_on_tree"  # unresolved multi-cluster or off-tree cluster
+                for e in fixed_ev:
+                    if clone_of(e["placed_as"]) not in tree.parent:
+                        e["flags"].append("fill_blocked")
+                continue
+            targets = targets_all.get(t, {})
+            g = cp_by_tumour.get(t)
+            props: dict[str, dict[str, float]] = {k: {} for k in targets}
+            for k, c, v in (g.select("key", "clone", "proportion").iter_rows() if g is not None else []):
+                if k in props and v > 0:
+                    props[k][c] = v
+            missing = sorted(k for k in targets if not props[k])
+            if missing:
+                raise ValueError(f"{t}: samples without clone proportions: {missing}")
+            fixed: dict[str, int] = {}
+            for e in fixed_ev:
+                c = clone_of(e["placed_as"])
+                fixed[c] = fixed.get(c, 0) + 1
+            res = fill_ploidy(tree, props, targets, fixed, {c: ratio_rows.get((t, c)) for c in tree.parent})
+            fill_info[t] = res
+            for e in ploidy_ev:
+                e["placed_as"], e["placement_method"] = "superseded_by_fill", "fill"
+            for i, a in enumerate(res.added, 1):
+                ev.append({**template, "GD_event": f"fill{i}", "GD_event_id": f"{t}_fill{i}", "tumour_id": t,
+                           "is_clonal": False, "is_subclonal_mutation_supported": False,
+                           "samples": ",".join(a["samples"]), "placed_as": f"fill_{a['clone']}",
+                           "placement_method": "fill", "alpaca_score": ratio_rows.get((t, a["clone"])),
+                           "fill_alternatives": ",".join(a["alternatives"]) or None,
+                           "flags": ["fill_tie"] if a["alternatives"] else []})
+            if len(res.added) != len(ploidy_ev):
+                log.append(f"fill {t}: {len(res.added)} GDs added for {len(ploidy_ev)} PGDD ploidy-only events")
+
     for e in ev:
         e["placed_clone"] = clone_of(e["placed_as"])
+        e.setdefault("fill_alternatives", None)
 
     # H: path GD count vs max sample num_gds
     h_mismatch = {}
@@ -420,16 +490,16 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
             te = [e for e in ev if e["tumour_id"] == t]
             if all(e["is_clonal"] for e in te) or t not in trees:
                 continue
-            labels = {e["placed_as"] for e in te}
+            labels = {e["placed_as"] for e in te if e["placed_as"] != "superseded_by_fill"}
             if None in labels or "false_call" in labels:
                 continue
             clones = {clone_of(lb) for lb in labels}
             if None in clones:
                 continue  # notebook would raise here (alpaca_None, unresolved multi-cluster)
             tree = trees[t]
-            # notebook: distinct GD clones on the path; feasible rule: events (a clone can carry several)
+            # notebook: distinct GD clones on the path; fill: events (a clone can carry several)
             per_clone = ({c: sum(clone_of(e["placed_as"]) == c for e in te) for c in clones}
-                         if ploidy_rule == "feasible" else {c: 1 for c in clones})
+                         if ploidy_rule == "fill" else {c: 1 for c in clones})
             path_max = max(sum(per_clone.get(c, 0) for c in [leaf] + tree.ancestors(leaf)) for leaf in tree.leaves())
             if max_gds.get(t) != path_max:
                 h_mismatch[t] = (max_gds.get(t), path_max)
@@ -455,22 +525,24 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
         te = [e for e in ev if e["tumour_id"] == t]
         if cls in ("no_gd", "clonal_gd_only"):
             status = "resolved"
-        elif cls == "alpaca_called" and ploidy_rule == "feasible":
-            # resolved when every event fits exactly one clone by tree + ploidy, or the
-            # ratio that picked among several fitting clones is above the threshold
-            sub = [e for e in te if not e["is_clonal"]]
-            ok = bool(sub) and all(e["placement_method"] == "unique" or (
-                e["placement_method"] == "ratio" and e["alpaca_score"] is not None
-                and e["alpaca_score"] > ALPACA_WGD_THRESHOLD) for e in sub)
-            status = "resolved" if ok else "unresolved"
+        elif ploidy_rule == "fill":
+            # resolved when the fixed + added GDs bring every sample exactly to its num_gds
+            f = fill_info.get(t)
+            status = "resolved" if isinstance(f, Fill) and not f.remaining and not f.over else "unresolved"
         elif cls == "alpaca_called":
             scores = [e["alpaca_score"] for e in te if not e["is_clonal"]]
             ok = bool(scores) and all(s is not None and s > ALPACA_WGD_THRESHOLD for s in scores)
             status = "resolved" if ok else "unresolved"
         else:
             status = "unresolved"
+        f = fill_info.get(t)
         rows.append({"tumour_id": t, "triage": cls, "status": status, "has_alpaca_tree": t in trees,
-                     "n_events": len(te), "n_unplaced": sum(e["placed_clone"] is None for e in te),
+                     "n_events": len(te),
+                     "n_unplaced": sum(e["placed_clone"] is None and e["placed_as"] != "superseded_by_fill" for e in te),
+                     "fill": (None if f is None else f if isinstance(f, str) else
+                              "complete" if not f.remaining and not f.over else
+                              ";".join([f"missing:{s}={n}" for s, n in f.remaining.items()]
+                                       + [f"over:{s}={n}" for s, n in f.over.items()])),
                      "H_mismatch": t in h_mismatch,
                      "H_summary_max_gds": h_mismatch.get(t, (None, None))[0],
                      "H_tree_path_max_gds": h_mismatch.get(t, (None, None))[1]})
@@ -478,6 +550,6 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
     ev_df = pl.DataFrame([{**{k: v for k, v in e.items() if k != "flags"}, "flags": ";".join(e["flags"]) or None}
                           for e in ev], infer_schema_length=None)
     tumour_schema = {"tumour_id": pl.Utf8, "triage": pl.Utf8, "status": pl.Utf8, "has_alpaca_tree": pl.Boolean,
-                     "n_events": pl.Int64, "n_unplaced": pl.Int64, "H_mismatch": pl.Boolean,
+                     "n_events": pl.Int64, "n_unplaced": pl.Int64, "fill": pl.Utf8, "H_mismatch": pl.Boolean,
                      "H_summary_max_gds": pl.Int64, "H_tree_path_max_gds": pl.Int64}
     return Placement(ev_df, pl.DataFrame(rows, schema=tumour_schema).sort("tumour_id"), log)

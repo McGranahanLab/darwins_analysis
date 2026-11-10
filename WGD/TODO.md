@@ -11,8 +11,8 @@ Deferred work. Decisions and their reasoning are in `docs/previous_analysis_logi
 
 ## Improvements after the first real-data run
 
-- [x] Placement rule C: feasible-set rule (2026-11-09, LTX0025).
-- [ ] Placement rule G (ploidy-only events in mutation-supported tumours): apply the same feasible-set idea.
+- [x] Placement rules C and G: replaced by the tumour-level ploidy fill (2026-11-09, LTX0025, LTX0073).
+- [ ] Ploidy fill: review the 50% sample-level cut-off and the tie-breaks (spill, then ALPACA score) on the real cohort; check `fill_tie` events.
 - [ ] ALPACA ratio: review the 1.5 concerns (doc §5b): minimum `weight_sum` per allele inside `max(A,B)`, a borderline band as a quality input, and bimodality / calibration checks on real data.
 - [ ] Quality: final K' components and thresholds (`N_MIN`, `M_MIN`), plus the remaining quality codes.
 - [ ] Open decisions in doc §6: second GDs, triage classes, multi-cluster events with non-adjacent clusters or more than 2 clusters.

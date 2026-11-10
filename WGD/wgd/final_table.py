@@ -82,6 +82,8 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
             n_at[tree.mrca] = int(num_clonal.get(t, 0))
         elif r["triage"] != "no_gd" and te is not None:
             for e in te.iter_rows(named=True):
+                if e["placed_as"] == "superseded_by_fill":
+                    continue  # PGDD ploidy-only event replaced by the tumour-level fill
                 c = e["placed_clone"]
                 if c is None or c not in n_at:  # unplaced, or a PGDD cluster that is not an ALPACA clone
                     unplaced += 1
