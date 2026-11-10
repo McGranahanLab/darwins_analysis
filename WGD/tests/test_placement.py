@@ -420,3 +420,28 @@ def test_ltx0501_prefers_ancestral_clone_without_overdoubling():
     assert {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v} == {"clone4": 1, "clone5": 1, "clone6": 1}
     assert res.tumours["status"].item() == "resolved"
     assert tb["sub_class"][0] == "parallel only"
+
+
+def test_ltx1338_goes_as_high_as_the_data_allow():
+    """Real case (Piotr, 2026-11-10): mutation-supported GD on clone2 (explains R1, R2 and R3
+    through clone11); R4 still needs one. clone9 (extinct) and its only child clone15 cover
+    the same cells, so the GD goes on the more ancestral clone9, not clone15."""
+    parent = {"clone1": "diploid", "clone14": "clone15", "clone6": "clone7", "clone7": "clone12", "clone5": "clone14",
+              "clone15": "clone9", "clone10": "clone7", "clone4": "clone2", "clone11": "clone12", "clone9": "clone1",
+              "clone12": "clone2", "clone2": "clone1"}
+    ra = {"clone1": 1.957, "clone14": 1.077, "clone6": 0.989, "clone7": 1.068, "clone5": 1.029, "clone15": 1.0,
+          "clone10": 0.984, "clone4": 0.996, "clone11": 1.026, "clone9": 0.910, "clone12": 1.012, "clone2": 1.071}
+    rt = pl.DataFrame({"tumour_id": [T] * 12, "clone": list(parent), "parent": list(parent.values()),
+                       "ratio_A": [ra[c] for c in parent], "ratio_B": [1.0] * 12})
+    cp = {"R1": {"clone6": 1.0}, "R2": {"clone10": 1.0}, "R3": {"clone1": 0.35, "clone11": 0.65},
+          "R4": {"clone4": 0.2424, "clone5": 0.45, "clone14": 0.22, "clone15": 0.0876}}
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": cp[s].get(c, 0.0)}
+                         for s in cp for c in parent])
+    ev = events((False, True, "2", ["R1", "R2"]), (False, False, None, ["R3", "R4"]))
+    tu = tumour("Subclonal", 2)
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 1, "R4": 1})
+    res = placement.place_events(ev, tu, mut_counts(c2=30), rt, cpdf, ploidy_rule="fill", regions=reg)
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    assert {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v} == {"clone2": 1, "clone9": 1}
+    assert res.tumours["status"].item() == "resolved"
+    assert "fill_tie" not in (res.events["flags"].drop_nulls().to_list())

@@ -237,7 +237,10 @@ def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[st
           (2) equal, prefer the more ancestral clone that also doubles minor clones of
           already-doubled samples (LTX0501: clone6, not clone9, as clone6 is 8% of R1,
           which is at 1 GD through clone4);
-      (4) has the highest ALPACA score; (5) comes first in the tree.
+      (4) is the most ancestral (fewest ancestors): when the data can't tell clones apart,
+          e.g. a chain through an extinct clone, the GD goes as high as the data allow
+          (LTX1338: clone9, not its only child clone15);
+      (5) has the highest ALPACA score; (6) comes first in the tree.
     Cell fractions are summed over samples. A clone can take several GDs.
     """
     gds = dict(fixed)
@@ -257,15 +260,16 @@ def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[st
             over_cells, at_target = _cell_fit(tree, props, targets, {**gds, c: gds.get(c, 0) + 1})
             sc = score.get(c)
             sc = -np.inf if sc is None or np.isnan(sc) else sc
-            cands.append((-len(raised), round(over_cells, 9), -round(at_target, 9), -sc, c, raised))
+            depth = len(tree.ancestors(c))
+            cands.append((-len(raised), round(over_cells, 9), -round(at_target, 9), depth, -sc, c, raised))
         if not cands:
             break
-        cands.sort(key=lambda x: x[:4])  # stable: ties keep tree order
+        cands.sort(key=lambda x: x[:5])  # stable: ties keep tree order
         best = cands[0]
-        tied = [x[4] for x in cands if x[:3] == best[:3]]  # only the ALPACA score (or tree order) separated these
-        gds[best[4]] = gds.get(best[4], 0) + 1
-        added.append({"clone": best[4], "samples": sorted(best[5]), "over_cells": best[1], "at_target": -best[2],
-                      "alternatives": [c for c in tied if c != best[4]]})
+        tied = [x[5] for x in cands if x[:4] == best[:4]]  # only the ALPACA score (or tree order) separated these
+        gds[best[5]] = gds.get(best[5], 0) + 1
+        added.append({"clone": best[5], "samples": sorted(best[6]), "over_cells": best[1], "at_target": -best[2],
+                      "alternatives": [c for c in tied if c != best[5]]})
         lv = sample_levels(tree, props, gds, majority)
     remaining = {s: targets[s] - lv[s] for s in props if lv[s] < targets[s]}
     return Fill(added, remaining, over)
