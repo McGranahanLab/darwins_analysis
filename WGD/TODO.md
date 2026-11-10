@@ -19,7 +19,8 @@ Deferred work. Decisions and their reasoning are in `docs/previous_analysis_logi
   - b) **low quality**: `quality = Low`, with its `quality_code`;
   - c) **unlikely solutions**, e.g. reversion to diploid (step 04 flag `reversion`). Also candidates: `fill` incomplete (`missing:`/`over:`), `fill_tie`, `no_alpaca_tree`, `fixed_event_not_on_tree`, the path-vs-ploidy mismatch (H), a fill GD count differing from PGDD's ploidy-only event count, and multi-cluster parent–child events.
   Suggested output: `05_table/review.tsv` (tumour_id, category, reason) plus counts in a run summary.
-- [ ] Quality: final K' components and thresholds (`N_MIN`, `M_MIN`), plus the remaining quality codes.
+- [x] Quality: continuous per-tumour score (doc K'', `wgd/quality.py`, 2026-11-10).
+- [ ] Quality: calibrate weights on the cohort. On the real cases, `alpaca_disagrees` fires for most subclonal GDs (ratios 1.0–1.3), so check whether ALPACA ratios are informative for subclonal GDs before keeping that factor at full weight.
 - [ ] Open decisions in doc §6: second GDs, triage classes, multi-cluster events with non-adjacent clusters or more than 2 clusters.
 
 ## Upstream

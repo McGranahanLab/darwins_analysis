@@ -149,7 +149,20 @@ The real hand-over is the manual step: every tumour with subclonal events is rec
 
 `[48]` mentions also computing the "Bielski fraction" for quality. This wasn't implemented.
 
-#### K'. Proposed replacement quality (draft, 2026-11-07)
+#### K''. Implemented quality score (2026-11-10, Piotr: continuous, per tumour, no GD order)
+
+Step 04 computes `quality` in [0, 1] per tumour, as the product of factors (`wgd/quality.py`). Every factor below 1 is listed in `quality_code` with the value that triggered it. Per-event flags stay in `events_placed.tsv`.
+- **Graded, 0.5 → 1:**
+  - `borderline_ploidy`: the smallest distance of any sample's deciding `genome_frac_nMaj*` from 0.5; full credit at ≥ 0.10.
+  - `low_mut_support`: the smallest supporting count of a mutation-supported GD; full at ≥ 10.
+  - `alpaca_disagrees`: the smallest `max(ratio_A, ratio_B)` among GD clones; 0.5 at 1, full at ≥ 1.5.
+- **Fixed:**
+  - `ambiguous_solution` 0.5: the fill answer changes when a borderline sample is moved across 0.5 (each alone, then all together) or the clone-majority cut-off is 0.4/0.6. The alternatives are listed.
+  - `reversion` 0.2: a clone below a doubled clone has median ALPACA total CN ≤ 2.
+  - `ploidy_path_mismatch` 0.5, `unplaced_events` 0.5, `multicluster_parent_child` 0.7, `fill_tie` 0.8, `fill_count_differs` 0.9.
+- **The old K rule** (cohort 5th percentile of supporting counts) is dropped.
+
+#### K'. Proposed replacement quality (draft, 2026-11-07; superseded by K'')
 Piotr: the metric needs improving, with three components. Proposal: compute each component **per event**, keep them as columns, and derive the label from fixed thresholds (not cohort percentiles).
 
 | Component | Per-event value | Flag when | Source |

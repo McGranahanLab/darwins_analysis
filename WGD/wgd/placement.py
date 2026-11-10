@@ -39,6 +39,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from wgd import quality as Q
+
 ALPACA_WGD_THRESHOLD = 1.5
 MAJORITY = 0.5  # a clone's subtree "carries" a sample when it makes up more than this fraction of it
 TRIAGE = ("no_gd", "clonal_gd_only", "alpaca_called", "mut_supported")
@@ -534,6 +536,10 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
             if any((t, d) in reverted for d in trees[t].descendants(clone)):
                 e["flags"].append("reversion")
 
+    # quality (wgd.quality): per tumour, product of evidence factors
+    qual = _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpaca_cn,
+                           tumours, h_mismatch, fill_info, ploidy_rule)
+
     # per-tumour status (notebook queue files): no_gd / clonal_gd_only resolved,
     # alpaca_called resolved iff every event's ratio > 1.5, mut_supported unresolved
     rows = []
@@ -561,11 +567,130 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                                        + [f"over:{s}={n}" for s, n in f.over.items()])),
                      "H_mismatch": t in h_mismatch,
                      "H_summary_max_gds": h_mismatch.get(t, (None, None))[0],
-                     "H_tree_path_max_gds": h_mismatch.get(t, (None, None))[1]})
+                     "H_tree_path_max_gds": h_mismatch.get(t, (None, None))[1],
+                     "quality": qual.get(t, (None, None))[0], "quality_code": qual.get(t, (None, None))[1]})
 
     ev_df = pl.DataFrame([{**{k: v for k, v in e.items() if k != "flags"}, "flags": ";".join(e["flags"]) or None}
                           for e in ev], infer_schema_length=None)
     tumour_schema = {"tumour_id": pl.Utf8, "triage": pl.Utf8, "status": pl.Utf8, "has_alpaca_tree": pl.Boolean,
                      "n_events": pl.Int64, "n_unplaced": pl.Int64, "fill": pl.Utf8, "H_mismatch": pl.Boolean,
-                     "H_summary_max_gds": pl.Int64, "H_tree_path_max_gds": pl.Int64}
+                     "H_summary_max_gds": pl.Int64, "H_tree_path_max_gds": pl.Int64,
+                     "quality": pl.Float64, "quality_code": pl.Utf8}
     return Placement(ev_df, pl.DataFrame(rows, schema=tumour_schema).sort("tumour_id"), log)
+
+
+def _gd_vector(te: list[dict], cls: str, tree: Tree, num_clonal: int) -> dict[str, int]:
+    """GDs per clone as step 05 will write them."""
+    if cls == "no_gd":
+        return {}
+    if cls == "clonal_gd_only":
+        return {tree.mrca: num_clonal} if num_clonal else {}
+    out: dict[str, int] = {}
+    for e in te:
+        c = e["placed_clone"]
+        if e["placed_as"] != "superseded_by_fill" and c in tree.parent:
+            out[c] = out.get(c, 0) + 1
+    return out
+
+
+def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpaca_cn,
+                    tumours, h_mismatch, fill_info, ploidy_rule) -> dict[str, tuple[float, str | None]]:
+    targets_all: dict[str, dict[str, int]] = {}
+    if regions is not None:
+        for t, sid, n in regions.select("tumour_id", "sample_id", "num_gds").iter_rows():
+            targets_all.setdefault(t, {})[sample_key(sid)] = int(n)
+    fracs_all: dict[str, dict[str, tuple]] = {}
+    if summary is not None and {"genome_frac_nMaj2", "genome_frac_nMaj3", "genome_frac_nMaj4"} <= set(summary.columns):
+        for r in summary.iter_rows(named=True):
+            fracs_all.setdefault(r["tumour_id"], {})[sample_key(r["sample_name_hash"])] = (
+                r["genome_frac_nMaj2"], r["genome_frac_nMaj3"], r["genome_frac_nMaj4"])
+    maxab = {(r["tumour_id"], r["clone"]): max(r["ratio_A"], r["ratio_B"])
+             for r in ratios.iter_rows(named=True) if r["ratio_A"] is not None and r["ratio_B"] is not None}
+    med_total = {}
+    if alpaca_cn is not None and {"pred_CN_A", "pred_CN_B"} <= set(alpaca_cn.columns):
+        med_total = {(t, c): v for t, c, v in alpaca_cn.group_by("tumour_id", "clone")
+                     .agg((pl.col("pred_CN_A") + pl.col("pred_CN_B")).median()).iter_rows()}
+    num_clonal = dict(tumours.select("tumour_id", "num_clonal_gds").iter_rows()) if "num_clonal_gds" in tumours.columns else {}
+
+    out = {}
+    for t, cls in tri.items():
+        tree = trees.get(t)
+        te = [e for e in ev if e["tumour_id"] == t]
+        factors: list[tuple[str, float, str]] = []
+        targets = targets_all.get(t, {})
+        fracs = fracs_all.get(t, {})
+
+        margins = Q.ploidy_margins(targets, fracs)
+        if margins:
+            s_min = min(margins, key=margins.get)
+            factors.append(("borderline_ploidy", Q.graded(margins[s_min], Q.PLOIDY_MARGIN),
+                            f"{margins[s_min]:.3f}:{s_min.split('-')[-1]}"))
+
+        sup = [e["supporting_mut_count"] for e in te if e.get("is_subclonal_mutation_supported")
+               and e.get("supporting_mut_count") is not None]
+        if sup:
+            factors.append(("low_mut_support", Q.graded(min(sup), Q.MIN_SUPPORT), str(min(sup))))
+
+        flags = {f for e in te for f in e["flags"]}
+        if "multicluster_parent_child" in flags:
+            factors.append(("multicluster_parent_child", Q.FIXED["multicluster_parent_child"], ""))
+        if "fill_tie" in flags:
+            factors.append(("fill_tie", Q.FIXED["fill_tie"], ""))
+        if t in h_mismatch:
+            factors.append(("ploidy_path_mismatch", Q.FIXED["ploidy_path_mismatch"], "%s vs %s" % h_mismatch[t]))
+        n_unplaced = sum(e["placed_clone"] is None and e["placed_as"] != "superseded_by_fill" for e in te)
+        if n_unplaced:
+            factors.append(("unplaced_events", Q.FIXED["unplaced_events"], str(n_unplaced)))
+        f = fill_info.get(t)
+        if isinstance(f, Fill):
+            n_pgdd = sum(e["placed_as"] == "superseded_by_fill" for e in te)
+            if len(f.added) != n_pgdd:
+                factors.append(("fill_count_differs", Q.FIXED["fill_count_differs"], f"{len(f.added)} vs {n_pgdd}"))
+
+        if tree is not None:
+            gds = _gd_vector(te, cls, tree, int(num_clonal.get(t) or 0))
+            r = [(maxab.get((t, c)), c) for c in gds if maxab.get((t, c)) is not None]
+            if r:
+                rmin, cmin = min(r)
+                factors.append(("alpaca_disagrees", Q.graded(rmin, Q.ALPACA_THRESHOLD, 1.0), f"{rmin:.2f}:{cmin}"))
+            # reversion: a clone strictly below a doubled clone that looks diploid again
+            doubled = set(gds)
+            rev = [c for c in tree.parent if any(a in doubled for a in tree.ancestors(c))
+                   and med_total.get((t, c)) is not None and med_total[(t, c)] <= 2]
+            if rev:
+                factors.append(("reversion", Q.FIXED["reversion"], ",".join(rev)))
+            # stability: does the fill answer change under small perturbations?
+            g = cp_by_tumour.get(t)
+            if targets and g is not None and ploidy_rule == "fill":
+                props: dict[str, dict[str, float]] = {k: {} for k in targets}
+                for k, c, v in g.select("key", "clone", "proportion").iter_rows():
+                    if k in props and v > 0:
+                        props[k][c] = v
+                if all(props.values()):
+                    fixed: dict[str, int] = {}
+                    for e in te:
+                        if e.get("is_subclonal_mutation_supported") and e["placed_clone"] in tree.parent:
+                            fixed[e["placed_clone"]] = fixed.get(e["placed_clone"], 0) + 1
+                    sc = {c: maxab.get((t, c)) for c in tree.parent}
+
+                    def solve(tg, maj=MAJORITY):
+                        res = fill_ploidy(tree, props, tg, fixed, sc, maj)
+                        if res.remaining or res.over:
+                            return None
+                        v = dict(fixed)
+                        for a in res.added:
+                            v[a["clone"]] = v.get(a["clone"], 0) + 1
+                        return v
+
+                    base = solve(targets)
+                    alts = [solve(tg) for tg in Q.flips(targets, fracs, margins)] if fracs else []
+                    alts += [solve(targets, 0.4), solve(targets, 0.6)]
+                    diff = []
+                    for a in alts:
+                        if a is not None and base is not None and a != base and a not in diff:
+                            diff.append(a)
+                    if diff:
+                        txt = "|".join(",".join(f"{c}={n}" for c, n in sorted(a.items())) or "none" for a in diff[:3])
+                        factors.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], f"alt:{txt}"))
+        out[t] = Q.score(factors)
+    return out
