@@ -11,6 +11,9 @@ Graded factors run from 0.5 (worst) to 1 (at or past the threshold):
                       (full credit at >= MIN_SUPPORT)
   alpaca_disagrees    smallest ALPACA max(ratio_A, ratio_B) among clones carrying a GD
                       (0.5 at 1, full credit at >= ALPACA_THRESHOLD)
+  minority_coverage   a GD placed by the relaxed fill pass: smallest share of a doubled sample
+                      its clone covers (0.5 at 0, full credit at >= 0.5); clone proportions
+                      and sample ploidy disagree
 Fixed factors:
   ambiguous_solution  0.5   the placement changes when borderline samples are flipped
                             or the clone-majority cut-off moves to 0.4/0.6
@@ -31,6 +34,7 @@ import numpy as np
 PLOIDY_MARGIN = 0.10
 MIN_SUPPORT = 10
 ALPACA_THRESHOLD = 1.5
+MAJORITY_COVERAGE = 0.5
 FIXED = {
     "ambiguous_solution": 0.5,
     "reversion": 0.2,

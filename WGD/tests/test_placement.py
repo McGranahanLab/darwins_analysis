@@ -375,10 +375,11 @@ def test_sample_levels_and_fill_limits():
     tree = placement.Tree(PARENT)
     props = {s: {CP[s]: 1.0} for s in CP}
     assert placement.sample_levels(tree, props, {"clone1": 1, "clone2": 1}) == {"R1": 2, "R2": 2, "R3": 1}
-    # a GD on clone4 alone can't reach R1 when clone4 is only 40% of it
+    # clone4 is only 40% of R1 and clone2 would over-double R2: the relaxed pass takes clone4
     props2 = {**props, "R1": {"clone4": 0.4, "clone2": 0.6}}
     f = placement.fill_ploidy(tree, props2, {"R1": 2, "R2": 1, "R3": 1}, {"clone1": 1}, {})
-    assert [a["clone"] for a in f.added] == [] and f.remaining == {"R1": 1}
+    assert [(a["clone"], a.get("relaxed")) for a in f.added] == [("clone4", True)] and f.remaining == {}
+    assert f.added[0]["coverage"] == {"R1": 0.4}
     # over-explained: a fixed GD on clone2 pushes R2 above its target
     f = placement.fill_ploidy(tree, props, {"R1": 2, "R2": 1, "R3": 1}, {"clone1": 1, "clone2": 1}, {})
     assert f.over == {"R2": 1} and not f.added
@@ -445,3 +446,28 @@ def test_ltx1338_goes_as_high_as_the_data_allow():
     assert {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v} == {"clone2": 1, "clone9": 1}
     assert res.tumours["status"].item() == "resolved"
     assert "fill_tie" not in (res.events["flags"].drop_nulls().to_list())
+
+
+def test_ltx1055_relaxed_minority_clone():
+    """Real case (Piotr, 2026-11-11): mutation-supported GD on clone4 (FR1, FR2). SU R1 is fully
+    doubled (genome_frac_nMaj2 0.9997) but cp_table gives it 68% clone2, which is undoubled in
+    R2-R7, and only 32% clone3. No clone is the majority of R1 without doubling R2-R7, so the
+    relaxed pass puts the GD on clone3 (ALPACA ratio 3.2) and lowers quality."""
+    parent = {"clone1": "diploid", "clone2": "clone1", "clone3": "clone2", "clone6": "clone4", "clone4": "clone1"}
+    ra = {"clone1": 1.033, "clone2": 1.0, "clone3": 3.205, "clone6": 0.987, "clone4": 2.36}
+    rt = pl.DataFrame({"tumour_id": [T] * 5, "clone": list(parent), "parent": list(parent.values()),
+                       "ratio_A": [ra[c] for c in parent], "ratio_B": [1.0] * 5})
+    cp = {"F1": {"clone4": 1.0}, "F2": {"clone4": 0.38, "clone6": 0.62}, "R1": {"clone2": 0.68, "clone3": 0.32},
+          **{f"R{i}": {"clone2": 1.0} for i in range(2, 8)}}
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": cp[s].get(c, 0.0)}
+                         for s in cp for c in parent])
+    ev = events((False, True, "4", ["F1", "F2"]), (False, False, None, ["R1"]))
+    tu = tumour("Subclonal", 2)
+    reg = regions_df(T, {"F1": 1, "F2": 1, "R1": 1, **{f"R{i}": 0 for i in range(2, 8)}})
+    res = placement.place_events(ev, tu, mut_counts(c4=13), rt, cpdf, ploidy_rule="fill", regions=reg)
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    assert {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v} == {"clone3": 1, "clone4": 1}
+    t = res.tumours.row(0, named=True)
+    assert t["status"] == "resolved"
+    assert "minority_coverage(0.32:R1)" in t["quality_code"]
+    assert t["quality"] == pytest.approx(0.82, abs=1e-3)

@@ -43,6 +43,7 @@ from wgd import quality as Q
 
 ALPACA_WGD_THRESHOLD = 1.5
 MAJORITY = 0.5  # a clone's subtree "carries" a sample when it makes up more than this fraction of it
+MIN_COVERAGE = 0.1  # relaxed fill pass: smallest share of a sample a clone must cover
 TRIAGE = ("no_gd", "clonal_gd_only", "alpaca_called", "mut_supported")
 
 
@@ -271,8 +272,44 @@ def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[st
         added.append({"clone": best[5], "samples": sorted(best[6]), "over_cells": best[1], "at_target": -best[2],
                       "alternatives": [c for c in tied if c != best[5]]})
         lv = sample_levels(tree, props, gds, majority)
-    remaining = {s: targets[s] - lv[s] for s in props if lv[s] < targets[s]}
-    return Fill(added, remaining, over)
+    need = {s: targets[s] - lv[s] for s in props if lv[s] < targets[s]}
+
+    # Relaxed pass (2026-11-10, LTX1055): a sample is doubled but no clone's subtree is the
+    # majority of it without over-doubling other samples. Clone proportions are then likely
+    # off, so take the clone covering most of the still-undoubled samples' cells, provided no
+    # cell anywhere ends above its sample's target. Each such GD is marked `relaxed` with its
+    # coverage, which lowers quality (`minority_coverage`).
+    for _ in range(sum(need.values())):
+        if not need:
+            break
+        over_now, _ = _cell_fit(tree, props, targets, gds)
+        cands = []
+        for c in tree.parent:
+            sub = set(tree.subtree(c))
+            cov = {s: round(sum(v for k, v in props[s].items() if k in sub), 9) for s in need}
+            cov = {s: v for s, v in cov.items() if v >= MIN_COVERAGE}
+            if not cov:
+                continue
+            trial = {**gds, c: gds.get(c, 0) + 1}
+            if _cell_fit(tree, props, targets, trial)[0] > over_now + 1e-9:
+                continue
+            if any(lv_t > targets[s] for s, lv_t in sample_levels(tree, props, trial, majority).items()):
+                continue
+            sc = score.get(c)
+            sc = -np.inf if sc is None or np.isnan(sc) else sc
+            cands.append((-sum(cov.values()), len(tree.ancestors(c)), -sc, c, cov))
+        if not cands:
+            break
+        cands.sort(key=lambda x: x[:3])
+        best = cands[0]
+        gds[best[3]] = gds.get(best[3], 0) + 1
+        added.append({"clone": best[3], "samples": sorted(best[4]), "over_cells": over_now, "at_target": None,
+                      "alternatives": [x[3] for x in cands if x[:2] == best[:2] and x[3] != best[3]],
+                      "relaxed": True, "coverage": best[4]})
+        for s_ in best[4]:
+            need[s_] -= 1
+        need = {s_: n for s_, n in need.items() if n > 0}
+    return Fill(added, need, over)
 
 
 # ---- the pipeline ---------------------------------------------------------------
@@ -496,7 +533,9 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                            "samples": ",".join(a["samples"]), "placed_as": f"fill_{a['clone']}",
                            "placement_method": "fill", "alpaca_score": ratio_rows.get((t, a["clone"])),
                            "fill_alternatives": ",".join(a["alternatives"]) or None,
-                           "flags": ["fill_tie"] if a["alternatives"] else []})
+                           "flags": (["fill_tie"] if a["alternatives"] else [])
+                                    + ([f"minority_coverage({','.join(f'{k.split(chr(45))[-1]}:{v:.2f}' for k, v in a['coverage'].items())})"]
+                                       if a.get("relaxed") else [])})
             if len(res.added) != len(ploidy_ev):
                 log.append(f"fill {t}: {len(res.added)} GDs added for {len(ploidy_ev)} PGDD ploidy-only events")
 
@@ -640,6 +679,13 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             factors.append(("multicluster_parent_child", Q.FIXED["multicluster_parent_child"], ""))
         if "fill_tie" in flags:
             factors.append(("fill_tie", Q.FIXED["fill_tie"], ""))
+        f_fill = fill_info.get(t)
+        if isinstance(f_fill, Fill):
+            covs = [(v, k) for a in f_fill.added if a.get("relaxed") for k, v in a["coverage"].items()]
+            if covs:
+                cmin, smin = min(covs)
+                factors.append(("minority_coverage", Q.graded(cmin, Q.MAJORITY_COVERAGE),
+                                f"{cmin:.2f}:{smin.split('-')[-1]}"))
         if t in h_mismatch:
             factors.append(("ploidy_path_mismatch", Q.FIXED["ploidy_path_mismatch"], "%s vs %s" % h_mismatch[t]))
         n_unplaced = sum(e["placed_clone"] is None and e["placed_as"] != "superseded_by_fill" for e in te)
