@@ -30,7 +30,7 @@ canonical: `tumour_id` = `LTX0001-Tumour1`, `sample_id` = muttable
 | 02 | Prune against the tree (= clones ALPACA has: `cp_table.csv` / `tree_paths.json`, via tx_data `clone_proportions`): drop tumours without a tree; remove off-tree supporting clusters; an event left with no cluster is kept as `ploidy_only_pruned` | ✅ `scripts/02_prune_tree.py` |
 | 03 | Per-sample cohort summary `pgdd_cohort_gd_summary.tsv` (PGDD GD calls + ploidy + doubled-genome fraction; single-clone samples added with `source = single_clone`). Port of Piotr's `03_generate_summary.R` | ✅ `scripts/03_generate_summary.py` |
 | 04 | Place events on ALPACA clones: the previous notebook's rules A–I ported as is, except rules C and G: ploidy-only GDs are now placed per tumour by the ploidy fill (fixed clonal + mutation-supported GDs, then the fewest added GDs that bring every sample to its PGDD `num_gds`; `--ploidy-rule notebook` for the old rules) (QC, triage, ALPACA-ratio greedy pick, multi-cluster → child, clonal → MRCA, tree-position placement, path-vs-ploidy and reversion flags, supporting mutation counts). Improvements (doc §5) come later | ✅ `scripts/04_place_events.py` |
-| 05 | Per-clone table in the previous release format (`tumour_id, clone, parent, number_of_gds_at_clone, total_gds_per_tumour, quality, status, class, sub_class`, + `quality_code`, `n_unplaced_events`). `quality` is a per-tumour score in [0, 1] (product of evidence factors, `wgd/quality.py`, doc §K''); `quality_code` lists what lowered it; `worst_event_quality` / `worst_event_quality_code` give the same per GD-carrying clone (worst event if several) | ✅ `scripts/05_final_table.py` |
+| 05 | Per-clone table in the previous release format (`tumour_id, clone, parent, number_of_gds_at_clone, total_gds_per_tumour, quality, status, class, sub_class`, + `quality_code`, `n_unplaced_events`). `quality` is a per-tumour score in [0, 1] (product of evidence factors, `wgd/quality.py`, doc §K''); `quality_code` lists what lowered it; `worst_event_quality` / `worst_event_quality_code` give the same per GD-carrying clone (worst event if several) | ✅ `scripts/05_final_table.py`. Also writes `wgd_events.tsv`, one row per GD with a unique `wgd_event_id` (`tumour:clone:k`), source, PGDD event, quality and factors. `--reject-below Q` also writes `wgd_calls_rejected_below_<Q>.tsv`: GDs with event quality < Q dropped, per-clone and per-tumour scores recalculated |
 | 06 | Compare with the previous release table | ✅ `scripts/06_compare.py` |
 
 ## Run
@@ -45,7 +45,7 @@ pixi run generate_summary --pgdd-input output/<name>/00_pgdd_input/pgdd_input_al
     --pgdd-regions <pgdd_dir>/pgdd_GDs_per_region.tsv --out output/<name>
 pixi run place_events --tx-data-dir <tx_data>/data --out output/<name> \
     [--qc-table <manual_qc.tsv> --release-dir <_RELEASE/release_tx842>] [--alpaca-score ratio_A|max_AB]
-pixi run final_table --tx-data-dir <tx_data>/data --out output/<name>
+pixi run final_table --tx-data-dir <tx_data>/data --out output/<name> [--reject-below 0.3]
 pixi run compare_tables --old <previous table> --out output/<name>
 pixi run test     # needs tx_data with PR #5 next to darwins_analysis, or TX_DATA_REPO
 WGD_RSCRIPT="micromamba run -n pgdd Rscript" pixi run test   # also compares 00/03 with the R scripts

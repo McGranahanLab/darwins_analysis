@@ -514,5 +514,31 @@ def test_ltx1018_forced_third_gd_on_clone2():
     tb = final_table.build_table(res.events, res.tumours, tu, rt)
     assert {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v} == {"clone1": 1, "clone3": 1, "clone2": 1}
     row = tb.filter(pl.col("clone") == "clone2").row(0, named=True)
-    assert "minority_coverage(0.34)" in row["worst_event_quality_code"]
+    assert "minority_coverage(0.34:R2)" in row["worst_event_quality_code"]
     assert row["worst_event_quality"] < 0.45
+
+
+def test_event_table_ids_and_rejection():
+    """Per-event table with unique ids; rejecting the weak GD recomputes counts and scores."""
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 0})
+    summ = summary_df(T, {"R1": (0.95, 0.1, 0.03), "R2": (0.9, 0.1, 0.03), "R3": (0.1, 0.05, 0.0)})
+    ev = events((False, True, "4", ["R1"]), (False, True, "5", ["R2"]))
+    tu = tumour(n_sub=2)
+    rt = ratios(c4=2.0, c5=2.0)
+    res = run(ev, tu, mc=mut_counts(c4=40, c5=2), ploidy_rule="fill", regions=reg, summary=summ, rt=rt)
+    et = final_table.build_events(res.events, res.tumours, tu, rt)
+    assert et["wgd_event_id"].to_list() == [f"{T}:clone4:1", f"{T}:clone5:1"]
+    assert et["wgd_event_id"].n_unique() == et.height
+    assert et["source"].to_list() == ["mutation", "mutation"] and not et["rejected"].any()
+    full = final_table.build_table(res.events, res.tumours, tu, rt)
+    assert full["total_gds_per_tumour"][0] == 2 and full["quality"][0] == pytest.approx(0.6)  # 2 muts: 0.5+0.5*0.2
+    # reject GDs with event_quality < 0.7: clone5 goes, the tumour score recovers to 1
+    et_r = final_table.build_events(res.events, res.tumours, tu, rt, reject_below=0.7)
+    assert et_r.filter("rejected")["wgd_event_id"].to_list() == [f"{T}:clone5:1"]
+    filt = final_table.build_table(res.events, res.tumours, tu, rt, reject_below=0.7, event_table=et_r)
+    n = {c: v for c, v in zip(filt["clone"], filt["number_of_gds_at_clone"]) if v}
+    assert n == {"clone4": 1}
+    row = filt.row(0, named=True)
+    assert row["total_gds_per_tumour"] == 1 and row["n_rejected_events"] == 1
+    assert row["quality"] == 1.0 and row["quality_code"] is None
+    assert row["sub_class"] == "single subclonal GD"

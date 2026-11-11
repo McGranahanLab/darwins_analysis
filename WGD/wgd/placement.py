@@ -32,6 +32,7 @@ Deliberate deviations (the notebook would crash or misbehave; see the doc):
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -616,14 +617,15 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                      "H_mismatch": t in h_mismatch,
                      "H_summary_max_gds": h_mismatch.get(t, (None, None))[0],
                      "H_tree_path_max_gds": h_mismatch.get(t, (None, None))[1],
-                     "quality": qual.get(t, (None, None))[0], "quality_code": qual.get(t, (None, None))[1]})
+                     "quality": qual.get(t, (None, None, None))[0], "quality_code": qual.get(t, (None, None, None))[1],
+                     "tumour_factors": qual.get(t, (None, None, None))[2]})
 
     ev_df = pl.DataFrame([{**{k: v for k, v in e.items() if k != "flags"}, "flags": ";".join(e["flags"]) or None}
                           for e in ev], infer_schema_length=None)
     tumour_schema = {"tumour_id": pl.Utf8, "triage": pl.Utf8, "status": pl.Utf8, "has_alpaca_tree": pl.Boolean,
                      "n_events": pl.Int64, "n_unplaced": pl.Int64, "fill": pl.Utf8, "H_mismatch": pl.Boolean,
                      "H_summary_max_gds": pl.Int64, "H_tree_path_max_gds": pl.Int64,
-                     "quality": pl.Float64, "quality_code": pl.Utf8}
+                     "quality": pl.Float64, "quality_code": pl.Utf8, "tumour_factors": pl.Utf8}
     return Placement(ev_df, pl.DataFrame(rows, schema=tumour_schema).sort("tumour_id"), log)
 
 
@@ -703,6 +705,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                 factors.append(("fill_count_differs", Q.FIXED["fill_count_differs"], f"{len(f.added)} vs {n_pgdd}"))
 
         ambiguous_clones: set[str] = set()
+        amb_detail = ""
         rev: list[str] = []
         gds: dict[str, int] = {}
         if tree is not None:
@@ -751,9 +754,8 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                         ambiguous_clones |= {c for c in set(a) | set(base) | set(gds) if a.get(c, 0) != base.get(c, 0)}
                     if diff:
                         txt = "|".join(",".join(f"{c}={n}" for c, n in sorted(a.items())) or "none" for a in diff[:3])
-                        factors.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], f"alt:{txt}"))
-        out[t] = Q.score(factors)
-
+                        amb_detail = f"alt:{txt}"
+                        factors.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], amb_detail))
         # per-event score: the factors that belong to one GD (its clone, samples, support)
         for e in te:
             c = e["placed_clone"]
@@ -770,23 +772,35 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                 ef.append(("low_mut_support", Q.graded(e["supporting_mut_count"], Q.MIN_SUPPORT), str(e["supporting_mut_count"])))
             r = maxab.get((t, c))
             if r is not None:
-                ef.append(("alpaca_disagrees", Q.graded(r, Q.ALPACA_THRESHOLD, 1.0), f"{r:.2f}"))
+                ef.append(("alpaca_disagrees", Q.graded(r, Q.ALPACA_THRESHOLD, 1.0), f"{r:.2f}:{c}"))
             for fl in e["flags"]:
                 if fl.startswith("minority_coverage("):
-                    cov = min(float(x.split(":")[1]) for x in fl[len("minority_coverage("):-1].split(","))
-                    ef.append(("minority_coverage", Q.forced(cov), f"{cov:.2f}"))
+                    cov, reg = min((float(x.split(":")[1]), x.split(":")[0])
+                                   for x in fl[len("minority_coverage("):-1].split(","))
+                    ef.append(("minority_coverage", Q.forced(cov), f"{cov:.2f}:{reg}"))
             if "multicluster_parent_child" in e["flags"]:
                 ef.append(("multicluster_parent_child", Q.FIXED["multicluster_parent_child"], ""))
             if "fill_tie" in e["flags"]:
                 ef.append(("fill_tie", Q.FIXED["fill_tie"], e.get("fill_alternatives") or ""))
             if c in ambiguous_clones:
-                ef.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], ""))
+                ef.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], amb_detail))
             # reversion: charged to the nearest doubled ancestor of the reverted clone
             mine = [x for x in rev if next((a for a in tree.ancestors(x) if a in gds), None) == c]
             if mine:
                 ef.append(("reversion", Q.FIXED["reversion"], ",".join(mine)))
             e["event_quality"], e["event_quality_code"] = Q.score(ef)
+            e["_factors"] = [list(x) for x in ef if x[1] < 1]
+
+        # tumour score = per code, worst over its events and the tumour-level factors (Q.aggregate),
+        # so it can be recomputed after rejecting events (step 05 --reject-below)
+        tumour_only = [list(x) for x in factors if x[0] in Q.TUMOUR_ONLY and x[1] < 1]
+        amb = [x for x in factors if x[0] == "ambiguous_solution"]
+        if amb and not any(f[0] == "ambiguous_solution" for e in te for f in e.get("_factors", [])):
+            tumour_only.append(list(amb[0]))  # e.g. an alternative adds a GD where there is none
+        q, code = Q.aggregate([e.get("_factors", []) for e in te], tumour_only)
+        out[t] = (q, code, json.dumps(tumour_only))
     for e in ev:
+        e["event_factors"] = json.dumps(e.pop("_factors")) if "_factors" in e else None
         e.setdefault("event_quality", None)
         e.setdefault("event_quality_code", None)
     return out

@@ -24,21 +24,27 @@ One row per ALPACA clone of every QC-passed PGDD tumour:
   The worst event if the clone carries several; null on clones without a GD.
 * n_unplaced_events: events with no clone, or placed on a PGDD cluster that is
   not an ALPACA clone (they add no GD to any row).
+* n_rejected_events: GDs dropped by `--reject-below` (0 without it).
+
+The per-event table (`build_events`, `wgd_events.tsv`) has one row per GD with a
+unique `wgd_event_id` (tumour:clone:k), its source, PGDD event, quality and factors.
 """
 
 from __future__ import annotations
 
+import json
 from itertools import combinations
 
 import polars as pl
 
+from wgd import quality as Q
 from wgd.placement import Tree
 
 CLASS = {"no_gd": "no_wgd", "clonal_gd_only": "clonal_wgd",
          "alpaca_called": "ploidy_only", "mut_supported": "mut_supported"}
 COLUMNS = ("tumour_id", "clone", "parent", "number_of_gds_at_clone", "total_gds_per_tumour",
            "quality", "status", "class", "sub_class", "quality_code", "worst_event_quality", "worst_event_quality_code",
-           "n_unplaced_events")
+           "n_unplaced_events", "n_rejected_events")
 
 
 def sub_class(tree: Tree, subclonal_clones: list[str]) -> str | None:
@@ -55,12 +61,84 @@ def sub_class(tree: Tree, subclonal_clones: list[str]) -> str | None:
     return "parallel + sequential"
 
 
-def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.DataFrame,
-                ratios: pl.DataFrame) -> pl.DataFrame:
-    """`events`/`tumours` from step 04; `pgdd_tumours` = pgdd_GDs_per_tumour; `ratios` = alpaca_wgd_ratios."""
+EVENT_COLUMNS = ("wgd_event_id", "tumour_id", "clone", "parent", "gd_index_at_clone", "is_clonal", "source",
+                 "pgdd_event_id", "samples", "supporting_mut_count", "alpaca_score",
+                 "event_quality", "event_quality_code", "event_factors", "flags", "rejected")
+
+
+def _source(e: dict) -> str:
+    lb = e["placed_as"] or ""
+    if e["is_clonal"]:
+        return "clonal"
+    if lb.startswith("fill_"):
+        return "fill_forced" if (e.get("flags") or "").find("minority_coverage") >= 0 else "fill"
+    if lb.startswith("multicluster_"):
+        return "mutation_multicluster"
+    if lb.isdigit():
+        return "mutation"
+    return lb.split("_")[0] or "unplaced"  # notebook rules: alpaca / ploidy / false_call
+
+
+def build_events(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.DataFrame,
+                 ratios: pl.DataFrame, reject_below: float | None = None) -> pl.DataFrame:
+    """One row per GD (Piotr, 2026-11-11), with a unique `wgd_event_id` = tumour:clone:k
+    (k-th GD on that clone; `tumour:unplaced:k` for events not on an ALPACA clone).
+    PGDD ploidy-only events superseded by the fill are not GDs and are left out.
+    `rejected` = event_quality below `reject_below`."""
     num_clonal = dict(pgdd_tumours.select("tumour_id", "num_clonal_gds").iter_rows())
     ev = {t: g for (t,), g in events.group_by("tumour_id")} if events.height else {}
+    rows = []
+    for r in tumours.iter_rows(named=True):
+        t = r["tumour_id"]
+        g = ratios.filter(pl.col("tumour_id") == t)
+        te = ev.get(t)
+        if g.is_empty() or r["triage"] == "no_gd" or te is None:
+            continue
+        tree = Tree.from_ratios(g)
+        placed: dict[str, list[dict]] = {}
+        unplaced: list[dict] = []
+        for e in te.iter_rows(named=True):
+            if e["placed_as"] == "superseded_by_fill":
+                continue
+            c = e.get("placed_clone")
+            if c in tree.parent:
+                placed.setdefault(c, []).append(e)
+            else:
+                unplaced.append(e)
+        if r["triage"] == "clonal_gd_only":  # the count comes from num_clonal_gds (notebook [40])
+            n = int(num_clonal.get(t, 0))
+            base = placed.get(tree.mrca, [])
+            placed = {tree.mrca: (base + [base[-1]] * n)[:n]} if base else {}
+            unplaced = []
+        for c, es in list(placed.items()) + [(None, unplaced)]:
+            for k, e in enumerate(es, 1):
+                q = e.get("event_quality")
+                rows.append({
+                    "wgd_event_id": f"{t}:{c or 'unplaced'}:{k}", "tumour_id": t, "clone": c,
+                    "parent": tree.parent.get(c) if c else None, "gd_index_at_clone": k if c else None,
+                    "is_clonal": e["is_clonal"], "source": _source(e), "pgdd_event_id": e["GD_event_id"],
+                    "samples": e.get("samples"), "supporting_mut_count": e.get("supporting_mut_count"),
+                    "alpaca_score": e.get("alpaca_score"), "event_quality": q,
+                    "event_quality_code": e.get("event_quality_code"), "event_factors": e.get("event_factors"),
+                    "flags": e.get("flags"),
+                    "rejected": bool(reject_below is not None and c is not None and q is not None and q < reject_below),
+                })
+    schema = {"wgd_event_id": pl.Utf8, "tumour_id": pl.Utf8, "clone": pl.Utf8, "parent": pl.Utf8,
+              "gd_index_at_clone": pl.Int64, "is_clonal": pl.Boolean, "source": pl.Utf8, "pgdd_event_id": pl.Utf8,
+              "samples": pl.Utf8, "supporting_mut_count": pl.Int64, "alpaca_score": pl.Float64,
+              "event_quality": pl.Float64, "event_quality_code": pl.Utf8, "event_factors": pl.Utf8,
+              "flags": pl.Utf8, "rejected": pl.Boolean}
+    return pl.DataFrame(rows, schema=schema)
 
+
+def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.DataFrame,
+                ratios: pl.DataFrame, reject_below: float | None = None,
+                event_table: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Per-clone table from the per-event table. With `reject_below`, events whose quality is
+    below it are dropped: GD counts, sub_class, worst_event_quality and the tumour score
+    (Q.aggregate of the remaining events' factors + tumour-level factors) are recomputed."""
+    et = event_table if event_table is not None else build_events(events, tumours, pgdd_tumours, ratios, reject_below)
+    by_t = {t: g for (t,), g in et.group_by("tumour_id")} if et.height else {}
     rows = []
     for r in tumours.iter_rows(named=True):
         t = r["tumour_id"]
@@ -69,44 +147,42 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
             continue  # no ALPACA tree: reported by step 04
         tree = Tree.from_ratios(g)
         n_at = {c: 0 for c in tree.parent}
-        te = ev.get(t)
-        subclonal, unplaced = [], 0
-        if r["triage"] == "clonal_gd_only":
-            n_at[tree.mrca] = int(num_clonal.get(t, 0))
-        elif r["triage"] != "no_gd" and te is not None:
-            for e in te.iter_rows(named=True):
-                if e["placed_as"] == "superseded_by_fill":
-                    continue  # PGDD ploidy-only event replaced by the tumour-level fill
-                c = e["placed_clone"]
-                if c is None or c not in n_at:  # unplaced, or a PGDD cluster that is not an ALPACA clone
-                    unplaced += 1
-                    continue
-                n_at[c] += 1
-                if not e["is_clonal"]:
-                    subclonal.append(c)
+        subclonal, unplaced, n_rej = [], 0, 0
+        eq: dict[str, tuple[float, str | None]] = {}
+        kept_factors = []
+        te = by_t.get(t)
+        for e in (te.iter_rows(named=True) if te is not None else []):
+            if e["clone"] is None:
+                unplaced += 1
+                continue
+            if e["rejected"]:
+                n_rej += 1
+                continue
+            c = e["clone"]
+            n_at[c] += 1
+            if not e["is_clonal"]:
+                subclonal.append(c)
+            q = e["event_quality"]
+            if q is not None and (c not in eq or q < eq[c][0]):
+                eq[c] = (q, e["event_quality_code"])
+            kept_factors.append(json.loads(e["event_factors"]) if e["event_factors"] else [])
         sc = (sub_class(tree, subclonal) if r["triage"] in ("alpaca_called", "mut_supported")
               and unplaced == 0 else None)
-        # per-event quality on the clone carrying the GD(s): the worst of its events
-        eq: dict[str, tuple[float, str | None]] = {}
-        if te is not None and "event_quality" in te.columns and r["triage"] != "no_gd":
-            for e in te.iter_rows(named=True):
-                c, q = e["placed_clone"], e["event_quality"]
-                if e["placed_as"] == "superseded_by_fill" or q is None or n_at.get(c, 0) == 0:
-                    continue
-                if c not in eq or q < eq[c][0]:
-                    eq[c] = (q, e["event_quality_code"])
+        quality, code = r.get("quality"), r.get("quality_code")
+        if reject_below is not None and r.get("tumour_factors") is not None:
+            quality, code = Q.aggregate(kept_factors, json.loads(r["tumour_factors"]))
         for clone, parent in tree.parent.items():
             rows.append({
                 "tumour_id": t, "clone": clone, "parent": parent,
                 "number_of_gds_at_clone": n_at[clone], "total_gds_per_tumour": sum(n_at.values()),
-                "quality": r.get("quality"), "status": r["status"], "class": CLASS[r["triage"]],
-                "sub_class": sc, "quality_code": r.get("quality_code"),
+                "quality": quality, "status": r["status"], "class": CLASS[r["triage"]],
+                "sub_class": sc, "quality_code": code,
                 "worst_event_quality": eq.get(clone, (None, None))[0],
                 "worst_event_quality_code": eq.get(clone, (None, None))[1],
-                "n_unplaced_events": unplaced,
+                "n_unplaced_events": unplaced, "n_rejected_events": n_rej,
             })
     schema = {"tumour_id": pl.Utf8, "clone": pl.Utf8, "parent": pl.Utf8, "number_of_gds_at_clone": pl.Int64,
               "total_gds_per_tumour": pl.Int64, "quality": pl.Float64, "status": pl.Utf8, "class": pl.Utf8,
               "sub_class": pl.Utf8, "quality_code": pl.Utf8, "worst_event_quality": pl.Float64,
-              "worst_event_quality_code": pl.Utf8, "n_unplaced_events": pl.Int64}
+              "worst_event_quality_code": pl.Utf8, "n_unplaced_events": pl.Int64, "n_rejected_events": pl.Int64}
     return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone")

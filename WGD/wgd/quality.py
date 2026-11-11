@@ -103,6 +103,19 @@ def forced(coverage: float) -> float:
     return 0.2 + 0.3 * float(np.clip(coverage / MAJORITY_COVERAGE, 0.0, 1.0))
 
 
+TUMOUR_ONLY = ("borderline_ploidy", "ploidy_path_mismatch", "unplaced_events", "fill_count_differs")
+
+
+def aggregate(event_factors: list[list], tumour_factors: list) -> tuple[float, str | None]:
+    """Tumour score from its events' factors plus tumour-level factors: per code, the worst
+    (lowest) value, then the product. Used both for the full table and after rejecting events."""
+    worst: dict[str, tuple[float, str]] = {}
+    for code, f, detail in [x for fs in event_factors for x in fs] + list(tumour_factors):
+        if code not in worst or f < worst[code][0]:
+            worst[code] = (f, detail)
+    return score([(c, f, d) for c, (f, d) in worst.items()])
+
+
 def score(factors: list[tuple[str, float, str]]) -> tuple[float, str | None]:
     """(product of factors, codes for factors < 1). factors: (code, factor, detail)."""
     q = 1.0
