@@ -532,8 +532,8 @@ def test_event_table_ids_and_rejection():
     assert et["source"].to_list() == ["mutation", "mutation"] and not et["rejected"].any()
     full = final_table.build_table(res.events, res.tumours, tu, rt)
     assert full["total_gds_per_tumour"][0] == 2 and full["quality"][0] == pytest.approx(0.6)  # 2 muts: 0.5+0.5*0.2
-    # reject GDs with event_quality < 0.7: clone5 goes, the tumour score recovers to 1
-    et_r = final_table.build_events(res.events, res.tumours, tu, rt, reject_below=0.7)
+    # with --reject-mutation-supported, GDs with event_quality < 0.7 go: clone5, the score recovers to 1
+    et_r = final_table.build_events(res.events, res.tumours, tu, rt, reject_below=0.7, reject_mutation_supported=True)
     assert et_r.filter("rejected")["wgd_event_id"].to_list() == [f"{T}:clone5:1"]
     filt = final_table.build_table(res.events, res.tumours, tu, rt, reject_below=0.7, event_table=et_r)
     n = {c: v for c, v in zip(filt["clone"], filt["number_of_gds_at_clone"]) if v}
@@ -542,3 +542,24 @@ def test_event_table_ids_and_rejection():
     assert row["total_gds_per_tumour"] == 1 and row["n_rejected_events"] == 1
     assert row["quality"] == 1.0 and row["quality_code"] is None
     assert row["sub_class"] == "single subclonal GD"
+
+
+def test_rejection_keeps_mutation_supported_and_reports():
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 0})
+    summ = summary_df(T, {"R1": (0.95, 0.1, 0.03), "R2": (0.9, 0.1, 0.03), "R3": (0.1, 0.05, 0.0)})
+    ev = events((False, True, "4", ["R1"]), (False, False, None, ["R2"]))
+    tu = tumour(n_sub=2)
+    rt = ratios(c4=2.0, c5=1.0)  # the fill GD on clone5 gets alpaca_disagrees(1.00) -> 0.5
+    res = run(ev, tu, mc=mut_counts(c4=2), ploidy_rule="fill", regions=reg, summary=summ, rt=rt)
+    # clone4: mutation-supported, 2 mutations -> 0.6; clone5: fill, ALPACA 1.0 -> 0.5
+    et = final_table.build_events(res.events, res.tumours, tu, rt, reject_below=0.7)
+    assert dict(zip(et["clone"], et["rejected"])) == {"clone4": False, "clone5": True}
+    et2 = final_table.build_events(res.events, res.tumours, tu, rt, reject_below=0.7, reject_mutation_supported=True)
+    assert et2["rejected"].all()
+    full = final_table.build_table(res.events, res.tumours, tu, rt)
+    filt = final_table.build_table(res.events, res.tumours, tu, rt, reject_below=0.7, event_table=et)
+    rep = final_table.rejection_report(et, full, filt, 0.7)
+    r = rep.row(0, named=True)
+    assert rep.height == 1 and r["wgd_event_id"] == f"{T}:clone5:1" and r["source"] == "fill"
+    assert r["total_gds_before"] == 2 and r["total_gds_after"] == 1
+    assert r["tumour_quality_after"] > r["tumour_quality_before"]

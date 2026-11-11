@@ -79,12 +79,17 @@ def _source(e: dict) -> str:
     return lb.split("_")[0] or "unplaced"  # notebook rules: alpaca / ploidy / false_call
 
 
+MUTATION_SOURCES = ("mutation", "mutation_multicluster")
+
+
 def build_events(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.DataFrame,
-                 ratios: pl.DataFrame, reject_below: float | None = None) -> pl.DataFrame:
+                 ratios: pl.DataFrame, reject_below: float | None = None,
+                 reject_mutation_supported: bool = False) -> pl.DataFrame:
     """One row per GD (Piotr, 2026-11-11), with a unique `wgd_event_id` = tumour:clone:k
     (k-th GD on that clone; `tumour:unplaced:k` for events not on an ALPACA clone).
     PGDD ploidy-only events superseded by the fill are not GDs and are left out.
-    `rejected` = event_quality below `reject_below`."""
+    `rejected` = event_quality below `reject_below`. Mutation-supported GDs are never rejected
+    unless `reject_mutation_supported` (Piotr, 2026-11-11: already triaged by PGDD's bootstrap)."""
     num_clonal = dict(pgdd_tumours.select("tumour_id", "num_clonal_gds").iter_rows())
     ev = {t: g for (t,), g in events.group_by("tumour_id")} if events.height else {}
     rows = []
@@ -113,15 +118,17 @@ def build_events(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.D
         for c, es in list(placed.items()) + [(None, unplaced)]:
             for k, e in enumerate(es, 1):
                 q = e.get("event_quality")
+                src = _source(e)
+                rejectable = c is not None and (reject_mutation_supported or src not in MUTATION_SOURCES)
                 rows.append({
                     "wgd_event_id": f"{t}:{c or 'unplaced'}:{k}", "tumour_id": t, "clone": c,
                     "parent": tree.parent.get(c) if c else None, "gd_index_at_clone": k if c else None,
-                    "is_clonal": e["is_clonal"], "source": _source(e), "pgdd_event_id": e["GD_event_id"],
+                    "is_clonal": e["is_clonal"], "source": src, "pgdd_event_id": e["GD_event_id"],
                     "samples": e.get("samples"), "supporting_mut_count": e.get("supporting_mut_count"),
                     "alpaca_score": e.get("alpaca_score"), "event_quality": q,
                     "event_quality_code": e.get("event_quality_code"), "event_factors": e.get("event_factors"),
                     "flags": e.get("flags"),
-                    "rejected": bool(reject_below is not None and c is not None and q is not None and q < reject_below),
+                    "rejected": bool(reject_below is not None and rejectable and q is not None and q < reject_below),
                 })
     schema = {"wgd_event_id": pl.Utf8, "tumour_id": pl.Utf8, "clone": pl.Utf8, "parent": pl.Utf8,
               "gd_index_at_clone": pl.Int64, "is_clonal": pl.Boolean, "source": pl.Utf8, "pgdd_event_id": pl.Utf8,
@@ -186,3 +193,18 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
               "sub_class": pl.Utf8, "quality_code": pl.Utf8, "worst_event_quality": pl.Float64,
               "worst_event_quality_code": pl.Utf8, "n_unplaced_events": pl.Int64, "n_rejected_events": pl.Int64}
     return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone")
+
+
+def rejection_report(event_table: pl.DataFrame, full: pl.DataFrame, filtered: pl.DataFrame,
+                     reject_below: float) -> pl.DataFrame:
+    """One row per rejected GD, with the tumour's score and GD total before and after rejection."""
+    per_t = lambda tb, sfx: tb.unique("tumour_id").select(  # noqa: E731
+        "tumour_id", pl.col("quality").alias(f"tumour_quality_{sfx}"),
+        pl.col("total_gds_per_tumour").alias(f"total_gds_{sfx}"), pl.col("quality_code").alias(f"tumour_quality_code_{sfx}"))
+    return (event_table.filter("rejected")
+            .select("wgd_event_id", "tumour_id", "clone", "gd_index_at_clone", "is_clonal", "source", "pgdd_event_id",
+                    "samples", "event_quality", "event_quality_code")
+            .with_columns(pl.lit(reject_below).alias("reject_below"))
+            .join(per_t(full, "before"), on="tumour_id", how="left")
+            .join(per_t(filtered, "after"), on="tumour_id", how="left")
+            .sort("tumour_id", "wgd_event_id"))
