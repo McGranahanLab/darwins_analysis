@@ -470,7 +470,7 @@ def test_ltx1055_relaxed_minority_clone():
     t = res.tumours.row(0, named=True)
     assert t["status"] == "resolved"
     assert "minority_coverage(0.32:R1)" in t["quality_code"]
-    assert t["quality"] == pytest.approx(0.82, abs=1e-3)
+    assert t["quality"] == pytest.approx(0.2 + 0.3 * 0.32 / 0.5, abs=1e-3)  # forced placement: heavy penalty
 
 
 def test_event_quality_per_clone():
@@ -485,6 +485,34 @@ def test_event_quality_per_clone():
     assert e["clone5"]["event_quality"] == 0.75 and e["clone5"]["event_quality_code"] == "low_mut_support(5)"
     assert res.tumours["quality"].item() == 0.75
     tb = final_table.build_table(res.events, res.tumours, tumour(n_sub=2), ratios(c4=2.0, c5=2.0))
-    q = dict(zip(tb["clone"], tb["event_quality"]))
+    q = dict(zip(tb["clone"], tb["worst_event_quality"]))
     assert q["clone4"] == 1.0 and q["clone5"] == 0.75 and q["clone2"] is None
     assert tb["quality"].unique().to_list() == [0.75]
+
+
+def test_ltx1018_forced_third_gd_on_clone2():
+    """Real case (Piotr, 2026-11-11): clonal GD + mutation-supported GD on clone3. R2 needs a
+    third GD; clone2 (+ clone7) is only 34% of R2, and clone5 would also double R1's clone8 line
+    (over-doubling). Place it on clone2, but penalise heavily."""
+    parent = {"clone3": "clone6", "clone15": "clone13", "clone12": "clone3", "clone11": "clone12", "clone5": "clone1",
+              "clone8": "clone5", "clone7": "clone2", "clone6": "clone1", "clone4": "clone11", "clone13": "clone8",
+              "clone2": "clone12", "clone9": "clone4", "clone1": "diploid"}
+    ra = {"clone3": 1.227, "clone15": 1.0, "clone12": 1.223, "clone11": 0.999, "clone5": 1.019, "clone8": 0.998,
+          "clone7": 1.001, "clone6": 1.352, "clone4": 1.002, "clone13": 1.0, "clone2": 1.043, "clone9": 1.0, "clone1": 2.177}
+    rt = pl.DataFrame({"tumour_id": [T] * 13, "clone": list(parent), "parent": list(parent.values()),
+                       "ratio_A": [ra[c] for c in parent], "ratio_B": [1.0] * 13})
+    cp = {"F1": {"clone3": 0.36, "clone4": 0.09, "clone9": 0.2, "clone11": 0.35},
+          "R1": {"clone1": 0.07, "clone5": 0.52, "clone6": 0.07, "clone8": 0.15, "clone13": 0.08, "clone15": 0.11},
+          "R2": {"clone2": 0.15, "clone3": 0.1937, "clone4": 0.18, "clone5": 0.2063, "clone7": 0.19, "clone11": 0.03,
+                 "clone12": 0.05}}
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": cp[s].get(c, 0.0)}
+                         for s in cp for c in parent])
+    ev = events((True, False, None, ["F1", "R1", "R2"]), (False, True, "3", ["F1", "R2"]), (False, False, None, ["R2"]))
+    tu = tumour("Clonal", 2, n_second=1, n_clonal=1)
+    reg = regions_df(T, {"F1": 2, "R1": 1, "R2": 3})
+    res = placement.place_events(ev, tu, mut_counts(c3=8), rt, cpdf, ploidy_rule="fill", regions=reg)
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    assert {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v} == {"clone1": 1, "clone3": 1, "clone2": 1}
+    row = tb.filter(pl.col("clone") == "clone2").row(0, named=True)
+    assert "minority_coverage(0.34)" in row["worst_event_quality_code"]
+    assert row["worst_event_quality"] < 0.45

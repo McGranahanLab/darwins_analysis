@@ -11,9 +11,10 @@ Graded factors run from 0.5 (worst) to 1 (at or past the threshold):
                       (full credit at >= MIN_SUPPORT)
   alpaca_disagrees    smallest ALPACA max(ratio_A, ratio_B) among clones carrying a GD
                       (0.5 at 1, full credit at >= ALPACA_THRESHOLD)
-  minority_coverage   a GD placed by the relaxed fill pass: smallest share of a doubled sample
-                      its clone covers (0.5 at 0, full credit at >= 0.5); clone proportions
-                      and sample ploidy disagree
+  minority_coverage   heavy: a GD forced onto a clone that covers only part of a doubled
+                      sample (relaxed fill pass), because no clone explains it without
+                      over-doubling others; 0.2 at 0 coverage, rising to 0.5 at >= 0.5
+                      (Piotr, 2026-11-11: place it, but penalise heavily)
 Fixed factors:
   ambiguous_solution  0.5   the placement changes when borderline samples are flipped
                             or the clone-majority cut-off moves to 0.4/0.6
@@ -95,6 +96,11 @@ def flips(targets: dict[str, int], fracs: dict[str, tuple[float, float, float]],
     if len(moves) > 1:
         alts.append({**targets, **moves})
     return alts
+
+
+def forced(coverage: float) -> float:
+    """Heavy penalty for a forced (relaxed-pass) GD: 0.2 at 0 coverage, 0.5 at >= MAJORITY_COVERAGE."""
+    return 0.2 + 0.3 * float(np.clip(coverage / MAJORITY_COVERAGE, 0.0, 1.0))
 
 
 def score(factors: list[tuple[str, float, str]]) -> tuple[float, str | None]:

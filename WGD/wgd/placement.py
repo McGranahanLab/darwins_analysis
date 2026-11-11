@@ -59,6 +59,11 @@ def sample_key(sample: str) -> str:
     return s.split("--")[0]
 
 
+def region_label(key: str) -> str:
+    """Short region name for codes: LTX1018_SU_T1-R2 -> R2, LTX1018_SU_FLN01 -> FLN01."""
+    return key.split("_")[-1].split("-")[-1]
+
+
 def strip_clone(clusters: str | None) -> str | None:
     """Old PGDD runs wrote `clone3,clone6`; the current one writes `3,6`."""
     if clusters is None:
@@ -534,7 +539,7 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                            "placement_method": "fill", "alpaca_score": ratio_rows.get((t, a["clone"])),
                            "fill_alternatives": ",".join(a["alternatives"]) or None,
                            "flags": (["fill_tie"] if a["alternatives"] else [])
-                                    + ([f"minority_coverage({','.join(f'{k.split(chr(45))[-1]}:{v:.2f}' for k, v in a['coverage'].items())})"]
+                                    + ([f"minority_coverage({','.join(f'{region_label(k)}:{v:.2f}' for k, v in a['coverage'].items())})"]
                                        if a.get("relaxed") else [])})
             if len(res.added) != len(ploidy_ev):
                 log.append(f"fill {t}: {len(res.added)} GDs added for {len(ploidy_ev)} PGDD ploidy-only events")
@@ -667,7 +672,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         if margins:
             s_min = min(margins, key=margins.get)
             factors.append(("borderline_ploidy", Q.graded(margins[s_min], Q.PLOIDY_MARGIN),
-                            f"{margins[s_min]:.3f}:{s_min.split('-')[-1]}"))
+                            f"{margins[s_min]:.3f}:{region_label(s_min)}"))
 
         sup = [e["supporting_mut_count"] for e in te if e.get("is_subclonal_mutation_supported")
                and e.get("supporting_mut_count") is not None]
@@ -684,8 +689,8 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             covs = [(v, k) for a in f_fill.added if a.get("relaxed") for k, v in a["coverage"].items()]
             if covs:
                 cmin, smin = min(covs)
-                factors.append(("minority_coverage", Q.graded(cmin, Q.MAJORITY_COVERAGE),
-                                f"{cmin:.2f}:{smin.split('-')[-1]}"))
+                factors.append(("minority_coverage", Q.forced(cmin),
+                                f"{cmin:.2f}:{region_label(smin)}"))
         if t in h_mismatch:
             factors.append(("ploidy_path_mismatch", Q.FIXED["ploidy_path_mismatch"], "%s vs %s" % h_mismatch[t]))
         n_unplaced = sum(e["placed_clone"] is None and e["placed_as"] != "superseded_by_fill" for e in te)
@@ -760,7 +765,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             m = {x: margins[x] for x in ev_samples if x in margins}
             if m:
                 s_min = min(m, key=m.get)
-                ef.append(("borderline_ploidy", Q.graded(m[s_min], Q.PLOIDY_MARGIN), f"{m[s_min]:.3f}:{s_min.split('-')[-1]}"))
+                ef.append(("borderline_ploidy", Q.graded(m[s_min], Q.PLOIDY_MARGIN), f"{m[s_min]:.3f}:{region_label(s_min)}"))
             if e.get("is_subclonal_mutation_supported") and e.get("supporting_mut_count") is not None:
                 ef.append(("low_mut_support", Q.graded(e["supporting_mut_count"], Q.MIN_SUPPORT), str(e["supporting_mut_count"])))
             r = maxab.get((t, c))
@@ -769,7 +774,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             for fl in e["flags"]:
                 if fl.startswith("minority_coverage("):
                     cov = min(float(x.split(":")[1]) for x in fl[len("minority_coverage("):-1].split(","))
-                    ef.append(("minority_coverage", Q.graded(cov, Q.MAJORITY_COVERAGE), f"{cov:.2f}"))
+                    ef.append(("minority_coverage", Q.forced(cov), f"{cov:.2f}"))
             if "multicluster_parent_child" in e["flags"]:
                 ef.append(("multicluster_parent_child", Q.FIXED["multicluster_parent_child"], ""))
             if "fill_tie" in e["flags"]:
