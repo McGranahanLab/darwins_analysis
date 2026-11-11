@@ -18,6 +18,10 @@ One row per ALPACA clone of every QC-passed PGDD tumour:
   over the subclonal GD clones. Null otherwise.
 * quality: per-tumour score in [0, 1] from step 04 (wgd.quality); quality_code
   lists the factors that lowered it.
+* event_quality / event_quality_code: score of the GD(s) on this clone, from the
+  factors that belong to one event (its samples' ploidy margin, mutation support,
+  ALPACA ratio, minority coverage, tie, ambiguity of this clone, reversion below it).
+  The worst event if the clone carries several; null on clones without a GD.
 * n_unplaced_events: events with no clone, or placed on a PGDD cluster that is
   not an ALPACA clone (they add no GD to any row).
 """
@@ -33,7 +37,8 @@ from wgd.placement import Tree
 CLASS = {"no_gd": "no_wgd", "clonal_gd_only": "clonal_wgd",
          "alpaca_called": "ploidy_only", "mut_supported": "mut_supported"}
 COLUMNS = ("tumour_id", "clone", "parent", "number_of_gds_at_clone", "total_gds_per_tumour",
-           "quality", "status", "class", "sub_class", "quality_code", "n_unplaced_events")
+           "quality", "status", "class", "sub_class", "quality_code", "event_quality", "event_quality_code",
+           "n_unplaced_events")
 
 
 def sub_class(tree: Tree, subclonal_clones: list[str]) -> str | None:
@@ -81,15 +86,26 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
                     subclonal.append(c)
         sc = (sub_class(tree, subclonal) if r["triage"] in ("alpaca_called", "mut_supported")
               and unplaced == 0 else None)
+        # per-event quality on the clone carrying the GD(s): the worst of its events
+        eq: dict[str, tuple[float, str | None]] = {}
+        if te is not None and "event_quality" in te.columns and r["triage"] != "no_gd":
+            for e in te.iter_rows(named=True):
+                c, q = e["placed_clone"], e["event_quality"]
+                if e["placed_as"] == "superseded_by_fill" or q is None or n_at.get(c, 0) == 0:
+                    continue
+                if c not in eq or q < eq[c][0]:
+                    eq[c] = (q, e["event_quality_code"])
         for clone, parent in tree.parent.items():
             rows.append({
                 "tumour_id": t, "clone": clone, "parent": parent,
                 "number_of_gds_at_clone": n_at[clone], "total_gds_per_tumour": sum(n_at.values()),
                 "quality": r.get("quality"), "status": r["status"], "class": CLASS[r["triage"]],
                 "sub_class": sc, "quality_code": r.get("quality_code"),
+                "event_quality": eq.get(clone, (None, None))[0], "event_quality_code": eq.get(clone, (None, None))[1],
                 "n_unplaced_events": unplaced,
             })
     schema = {"tumour_id": pl.Utf8, "clone": pl.Utf8, "parent": pl.Utf8, "number_of_gds_at_clone": pl.Int64,
               "total_gds_per_tumour": pl.Int64, "quality": pl.Float64, "status": pl.Utf8, "class": pl.Utf8,
-              "sub_class": pl.Utf8, "quality_code": pl.Utf8, "n_unplaced_events": pl.Int64}
+              "sub_class": pl.Utf8, "quality_code": pl.Utf8, "event_quality": pl.Float64,
+              "event_quality_code": pl.Utf8, "n_unplaced_events": pl.Int64}
     return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone")

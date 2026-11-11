@@ -471,3 +471,20 @@ def test_ltx1055_relaxed_minority_clone():
     assert t["status"] == "resolved"
     assert "minority_coverage(0.32:R1)" in t["quality_code"]
     assert t["quality"] == pytest.approx(0.82, abs=1e-3)
+
+
+def test_event_quality_per_clone():
+    """Two GDs in one tumour: a well-supported one (clone4) and a weak one (clone5, 5 mutations)."""
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 0})
+    summ = summary_df(T, {"R1": (0.95, 0.1, 0.03), "R2": (0.9, 0.1, 0.03), "R3": (0.1, 0.05, 0.0)})
+    ev = events((False, True, "4", ["R1"]), (False, True, "5", ["R2"]))
+    res = run(ev, tumour(n_sub=2), mc=mut_counts(c4=40, c5=5), ploidy_rule="fill", regions=reg, summary=summ,
+              rt=ratios(c4=2.0, c5=2.0))
+    e = {r["placed_clone"]: r for r in res.events.iter_rows(named=True)}
+    assert e["clone4"]["event_quality"] == 1.0 and e["clone4"]["event_quality_code"] is None
+    assert e["clone5"]["event_quality"] == 0.75 and e["clone5"]["event_quality_code"] == "low_mut_support(5)"
+    assert res.tumours["quality"].item() == 0.75
+    tb = final_table.build_table(res.events, res.tumours, tumour(n_sub=2), ratios(c4=2.0, c5=2.0))
+    q = dict(zip(tb["clone"], tb["event_quality"]))
+    assert q["clone4"] == 1.0 and q["clone5"] == 0.75 and q["clone2"] is None
+    assert tb["quality"].unique().to_list() == [0.75]

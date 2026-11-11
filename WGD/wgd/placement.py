@@ -697,6 +697,9 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             if len(f.added) != n_pgdd:
                 factors.append(("fill_count_differs", Q.FIXED["fill_count_differs"], f"{len(f.added)} vs {n_pgdd}"))
 
+        ambiguous_clones: set[str] = set()
+        rev: list[str] = []
+        gds: dict[str, int] = {}
         if tree is not None:
             gds = _gd_vector(te, cls, tree, int(num_clonal.get(t) or 0))
             r = [(maxab.get((t, c)), c) for c in gds if maxab.get((t, c)) is not None]
@@ -739,8 +742,46 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                     for a in alts:
                         if a is not None and base is not None and a != base and a not in diff:
                             diff.append(a)
+                    for a in diff:
+                        ambiguous_clones |= {c for c in set(a) | set(base) | set(gds) if a.get(c, 0) != base.get(c, 0)}
                     if diff:
                         txt = "|".join(",".join(f"{c}={n}" for c, n in sorted(a.items())) or "none" for a in diff[:3])
                         factors.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], f"alt:{txt}"))
         out[t] = Q.score(factors)
+
+        # per-event score: the factors that belong to one GD (its clone, samples, support)
+        for e in te:
+            c = e["placed_clone"]
+            if e["placed_as"] == "superseded_by_fill" or tree is None or c not in tree.parent:
+                e["event_quality"], e["event_quality_code"] = None, None
+                continue
+            ef: list[tuple[str, float, str]] = []
+            ev_samples = [sample_key(x) for x in (e.get("samples") or "").split(",") if x] or list(targets)
+            m = {x: margins[x] for x in ev_samples if x in margins}
+            if m:
+                s_min = min(m, key=m.get)
+                ef.append(("borderline_ploidy", Q.graded(m[s_min], Q.PLOIDY_MARGIN), f"{m[s_min]:.3f}:{s_min.split('-')[-1]}"))
+            if e.get("is_subclonal_mutation_supported") and e.get("supporting_mut_count") is not None:
+                ef.append(("low_mut_support", Q.graded(e["supporting_mut_count"], Q.MIN_SUPPORT), str(e["supporting_mut_count"])))
+            r = maxab.get((t, c))
+            if r is not None:
+                ef.append(("alpaca_disagrees", Q.graded(r, Q.ALPACA_THRESHOLD, 1.0), f"{r:.2f}"))
+            for fl in e["flags"]:
+                if fl.startswith("minority_coverage("):
+                    cov = min(float(x.split(":")[1]) for x in fl[len("minority_coverage("):-1].split(","))
+                    ef.append(("minority_coverage", Q.graded(cov, Q.MAJORITY_COVERAGE), f"{cov:.2f}"))
+            if "multicluster_parent_child" in e["flags"]:
+                ef.append(("multicluster_parent_child", Q.FIXED["multicluster_parent_child"], ""))
+            if "fill_tie" in e["flags"]:
+                ef.append(("fill_tie", Q.FIXED["fill_tie"], e.get("fill_alternatives") or ""))
+            if c in ambiguous_clones:
+                ef.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], ""))
+            # reversion: charged to the nearest doubled ancestor of the reverted clone
+            mine = [x for x in rev if next((a for a in tree.ancestors(x) if a in gds), None) == c]
+            if mine:
+                ef.append(("reversion", Q.FIXED["reversion"], ",".join(mine)))
+            e["event_quality"], e["event_quality_code"] = Q.score(ef)
+    for e in ev:
+        e.setdefault("event_quality", None)
+        e.setdefault("event_quality_code", None)
     return out

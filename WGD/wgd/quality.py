@@ -25,6 +25,13 @@ Fixed factors:
   fill_tie            0.8   a fill GD was chosen by the ALPACA score alone
   fill_count_differs  0.9   the fill added a different number of GDs than PGDD's ploidy-only events
 GD order is deliberately not used (Piotr, 2026-11-10).
+
+Per-event score (2026-11-11): the same factors restricted to one GD:
+borderline_ploidy over the event's samples, low_mut_support of that event,
+alpaca_disagrees of its clone, minority_coverage / fill_tie / multicluster_parent_child
+of that event, ambiguous_solution if its clone's GD count changes in an alternative,
+and reversion if a reverted clone has this clone as nearest doubled ancestor.
+ploidy_path_mismatch, unplaced_events and fill_count_differs are tumour-only.
 """
 
 from __future__ import annotations
