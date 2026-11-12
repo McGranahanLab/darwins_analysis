@@ -64,3 +64,8 @@ min_quality = 0.8
 gds = "clone2=1,clone4=1"
 status = "resolved"
 agreed = "2026-11-12: GD1 (clusters 5,4) goes on the child clone4; on clone5 it would revert clone12's subtree (all of it in diploid SU_T1.R2) -> failed, quality 0"
+
+["LTX0552-Tumour2"]
+gds = "clone10=1,clone14=1,clone20=1,clone21=1,clone22=1,clone7=1"
+status = "resolved"
+agreed = "2026-11-12: every sample doubled, not clonal (doubled mutations in clone7): one GD per branch, minor clones included (clone20, clone10, clone22 via the minor-clone pass)"

@@ -20,6 +20,8 @@ class Params:
     # ploidy fill (wgd.placement)
     majority: float = 0.5                  # a clone's subtree carries a sample when > this fraction of it
     min_coverage: float = 0.1              # relaxed fill pass: smallest share of a sample a clone must cover
+    fill_minor_clones: bool = True         # minor-clone pass: also double clones left below their sample's level
+    minor_min_cells: float = 0.0           # minor-clone pass: a GD must bring more than this share of cells to target
     alpaca_wgd_threshold: float = 1.5      # notebook rule: alpaca_called tumour resolved iff every ratio > this
 
     # quality (wgd.quality)
@@ -85,6 +87,8 @@ def apply(p: Params) -> None:
     from wgd import placement, quality
     placement.MAJORITY = p.majority
     placement.MIN_COVERAGE = p.min_coverage
+    placement.MINOR_CLONES = p.fill_minor_clones
+    placement.MINOR_MIN_CELLS = p.minor_min_cells
     placement.ALPACA_WGD_THRESHOLD = p.alpaca_wgd_threshold
     quality.PLOIDY_MARGIN = p.ploidy_margin
     quality.MIN_SUPPORT = p.min_support

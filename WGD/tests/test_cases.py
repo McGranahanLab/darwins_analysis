@@ -90,3 +90,15 @@ def test_ltx0272_gd_on_clone5_fails_as_reversion_to_diploid():
     ev = {e["clone"]: e for e in r["wgd_events"].iter_rows(named=True)}
     assert ev["clone5"]["event_quality"] == 0.0 and ev["clone2"]["event_quality"] > 0
     assert r["modified_tumours"]["modification"].to_list() == ["failed_reversion_to_diploid"]
+
+
+def test_ltx0552_minor_clone_pass():
+    """Without the minor-clone pass only the majority clones are doubled (clone7, clone14, clone21)."""
+    import dataclasses
+    d = CASES / "LTX0552-Tumour2"
+    t, ratios, cp = read_case(d / "cp_table.csv", d / "ratio_scores.csv")
+    r = replay(pgdd_tables(d / "pgdd", t), ratios, cp, dataclasses.replace(PARAMS, fill_minor_clones=False))
+    assert r["gds"] == "clone14=1,clone21=1,clone7=1"
+    r = replay(pgdd_tables(d / "pgdd", t), ratios, cp, PARAMS)
+    flags = {e["clone"]: e["flags"] for e in r["wgd_events"].iter_rows(named=True)}
+    assert flags["clone20"] == "minor_clone_fill(R3:0.07,R4:0.04,R5:0.12)" and flags["clone14"] is None

@@ -1,0 +1,41 @@
+{
+ "events": {
+  "LTX0552-Tumour2:clone10:1": [
+   "fill",
+   0.504,
+   "alpaca_disagrees(1.00:clone10)"
+  ],
+  "LTX0552-Tumour2:clone14:1": [
+   "fill",
+   0.5,
+   "alpaca_disagrees(1.00:clone14)"
+  ],
+  "LTX0552-Tumour2:clone20:1": [
+   "fill",
+   0.5,
+   "alpaca_disagrees(1.00:clone20)"
+  ],
+  "LTX0552-Tumour2:clone21:1": [
+   "fill",
+   0.644,
+   "alpaca_disagrees(1.14:clone21)"
+  ],
+  "LTX0552-Tumour2:clone22:1": [
+   "fill",
+   0.5,
+   "alpaca_disagrees(1.00:clone22)"
+  ],
+  "LTX0552-Tumour2:clone7:1": [
+   "mutation",
+   0.905,
+   "alpaca_disagrees(1.03:clone7:mut32)"
+  ]
+ },
+ "gds": "clone10=1,clone14=1,clone20=1,clone21=1,clone22=1,clone7=1",
+ "modifications": [],
+ "ploidy_prior": null,
+ "quality": 0.45,
+ "quality_code": "alpaca_disagrees(1.00:clone14);fill_count_differs(5 vs 1)",
+ "solution_strict": null,
+ "status": "resolved"
+}

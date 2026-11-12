@@ -46,6 +46,8 @@ from wgd import quality as Q
 ALPACA_WGD_THRESHOLD = 1.5
 MAJORITY = 0.5  # a clone's subtree "carries" a sample when it makes up more than this fraction of it
 MIN_COVERAGE = 0.1  # relaxed fill pass: smallest share of a sample a clone must cover
+MINOR_CLONES = True  # minor-clone pass: also double clones left below their sample's level (LTX0552)
+MINOR_MIN_CELLS = 0.0  # minor-clone pass: smallest summed share of cells a GD must bring to target
 TRIAGE = ("no_gd", "clonal_gd_only", "alpaca_called", "mut_supported")
 
 
@@ -318,6 +320,39 @@ def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[st
         for s_ in best[4]:
             need[s_] -= 1
         need = {s_: n for s_, n in need.items() if n > 0}
+
+    # Minor-clone pass (Piotr, 2026-11-12, LTX0552-T2): every sample is doubled, but the GD can't be
+    # clonal, so each branch needs its own GD. The majority rule stops once each sample is > 50%
+    # doubled, leaving minor clones (4-12%) undoubled in fully doubled samples. Add GDs on clones whose
+    # cells are below their sample's target, provided no cell anywhere ends above its sample's
+    # target. Most cells brought to target first, then the most ancestral, then the ALPACA score.
+    # Each such GD is marked `minor` with the cells it brought up per sample.
+    def count_of(g):
+        return {c: sum(g.get(a, 0) for a in [c] + tree.ancestors(c)) for c in tree.parent}
+
+    for _ in range(sum(len(p) for p in props.values()) if MINOR_CLONES else 0):
+        cnt = count_of(gds)
+        cands = []
+        for c in tree.parent:
+            sub = set(tree.subtree(c))
+            if any(v > 0 and cnt.get(k, 0) + 1 > targets[s] for s, p in props.items() for k, v in p.items() if k in sub):
+                continue
+            gain = {s: round(sum(v for k, v in p.items() if k in sub and cnt.get(k, 0) < targets[s]), 9)
+                    for s, p in props.items()}
+            gain = {s: v for s, v in gain.items() if v > 0}
+            if not gain or sum(gain.values()) <= MINOR_MIN_CELLS:
+                continue
+            sc = score.get(c)
+            sc = -np.inf if sc is None or np.isnan(sc) else sc
+            cands.append((-sum(gain.values()), len(tree.ancestors(c)), -sc, c, gain))
+        if not cands:
+            break
+        cands.sort(key=lambda x: x[:3])
+        best = cands[0]
+        gds[best[3]] = gds.get(best[3], 0) + 1
+        added.append({"clone": best[3], "samples": sorted(best[4]), "over_cells": 0.0, "at_target": None,
+                      "alternatives": [x[3] for x in cands if x[:2] == best[:2] and x[3] != best[3]],
+                      "minor": True, "cells": best[4]})
     return Fill(added, need, over)
 
 
@@ -567,6 +602,8 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                            "flags": (["fill_tie"] if a["alternatives"] else [])
                                     + ([f"minority_coverage({','.join(f'{region_label(k)}:{v:.2f}' for k, v in a['coverage'].items())})"]
                                        if a.get("relaxed") else [])
+                                    + ([f"minor_clone_fill({','.join(f'{region_label(k)}:{v:.2f}' for k, v in a['cells'].items())})"]
+                                       if a.get("minor") else [])
                                     + ([f"prior_raised({','.join(f'{region_label(k)}:{m[2]:.3f}' for k, m in mine.items())})"]
                                        if mine else [])})
             if len(res.added) != len(ploidy_ev):

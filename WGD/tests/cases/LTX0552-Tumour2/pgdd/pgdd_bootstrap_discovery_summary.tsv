@@ -1,0 +1,1 @@
+tumour_id	sample_id	cluster_id	num_muts	perc_cn2	num_cn2	k	B	stability	ci_low	ci_high	keep_call	p_value	q_value	is_stable

@@ -4,6 +4,9 @@
 # ---- ploidy fill ----
 majority = 0.5               # a clone's subtree carries a sample when > this fraction of it
 min_coverage = 0.1           # relaxed fill pass: smallest share of a sample a clone must cover
+fill_minor_clones = true     # minor-clone pass: also double clones left below their sample's level, if no cell
+                             # ends above its sample's level (LTX0552-T2)
+minor_min_cells = 0.0        # minor-clone pass: a GD must bring more than this share of cells (summed) to target
 alpaca_wgd_threshold = 1.5   # notebook rule only: alpaca_called resolved iff every ratio > this
 
 # ---- quality ----
