@@ -46,3 +46,10 @@ gds = "clone1=3"
 status = "resolved"
 agreed = "2026-11-12: three clonal GDs, the third with lower confidence"
 ploidy_prior = "applied"
+
+["LTX0535-Tumour1"]
+gds = "clone1=1"
+status = "resolved"
+agreed = "2026-11-12: clonal, but weaker evidence than LTX0981 (every sample borderline at the first level)"
+ploidy_prior = "applied"
+max_quality = 0.5

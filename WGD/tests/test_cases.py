@@ -56,6 +56,12 @@ def test_agreed_answer(tumour):
         assert (got["ploidy_prior"] or "").startswith(a["ploidy_prior"])
 
 
+def test_clear_prior_scores_above_borderline_prior():
+    """Piotr, 2026-11-12: LTX0981 (one borderline sample against a clear majority) is more
+    believable than LTX0535 (every sample borderline); both clonal."""
+    assert run_case("LTX0981-Tumour1")["quality"] > run_case("LTX0535-Tumour1")["quality"]
+
+
 @pytest.mark.parametrize("tumour", sorted(AGREED))
 def test_snapshot(tumour):
     f = CASES / tumour / "snapshot.json"

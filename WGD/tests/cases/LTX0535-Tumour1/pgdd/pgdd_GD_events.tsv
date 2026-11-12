@@ -1,0 +1,2 @@
+GD_event	GD_event_id	tumour_id	is_clonal	num_regions_gd_event	total_regions	is_subclonal_mutation_supported	clusters	samples
+GD1	LTX0535-Tumour1_GD1	LTX0535-Tumour1	FALSE	6	8	FALSE		LTX0535_SU_T1.R1..b13fa563hj7f,LTX0535_SU_T1.R2..8720035fhj7f,LTX0535_SU_T1.R3..a4ffd970hj7f,LTX0535_SU_T1.R6..cf185aebhj7f,LTX0535_SU_T1.R7..45c4a78bhj7f,LTX0535_SU_T1.R8..2b7d7b89hj7f
