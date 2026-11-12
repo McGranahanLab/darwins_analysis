@@ -26,6 +26,7 @@ class Params:
     ploidy_margin: float = 0.10            # borderline_ploidy: full credit at this distance from 0.5
     min_support: int = 10                  # low_mut_support: full credit at this many doubled mutations
     alpaca_threshold: float = 1.5          # alpaca_disagrees: full credit at this max(ratio_A, ratio_B)
+    alpaca_mut_floor: float = 0.9          # alpaca_disagrees lowest value for a GD with >= min_support doubled mutations
     majority_coverage: float = 0.5         # minority_coverage: 0.2 at 0, 0.5 at this coverage
     ambiguity_majorities: tuple[float, ...] = (0.4, 0.6)  # ambiguous_solution: majority cut-offs tried
     fixed: dict[str, float] = field(default_factory=lambda: {
@@ -86,5 +87,6 @@ def apply(p: Params) -> None:
     quality.PLOIDY_MARGIN = p.ploidy_margin
     quality.MIN_SUPPORT = p.min_support
     quality.ALPACA_THRESHOLD = p.alpaca_threshold
+    quality.ALPACA_MUT_FLOOR = p.alpaca_mut_floor
     quality.MAJORITY_COVERAGE = p.majority_coverage
     quality.FIXED = dict(p.fixed)

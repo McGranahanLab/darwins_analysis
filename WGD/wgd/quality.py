@@ -10,7 +10,10 @@ Graded factors run from 0.5 (worst) to 1 (at or past the threshold):
   low_mut_support     smallest supporting doubled-mutation count of a mutation-supported GD
                       (full credit at >= MIN_SUPPORT)
   alpaca_disagrees    smallest ALPACA max(ratio_A, ratio_B) among clones carrying a GD
-                      (0.5 at 1, full credit at >= ALPACA_THRESHOLD)
+                      (0.5 at 1, full credit at >= ALPACA_THRESHOLD). For a mutation-supported
+                      GD the worst value rises to ALPACA_MUT_FLOOR (0.9) at >= MIN_SUPPORT doubled
+                      mutations (Piotr, 2026-11-12, LTX1348: ALPACA, blind to PGDD, moves parallel
+                      GDs in two clones onto their absent parent by parsimony; mutations win)
   minority_coverage   heavy: a GD forced onto a clone that covers only part of a doubled
                       sample (relaxed fill pass), because no clone explains it without
                       over-doubling others; 0.2 at 0 coverage, rising to 0.5 at >= 0.5
@@ -50,6 +53,7 @@ import numpy as np
 PLOIDY_MARGIN = 0.10
 MIN_SUPPORT = 10
 ALPACA_THRESHOLD = 1.5
+ALPACA_MUT_FLOOR = 0.9
 MAJORITY_COVERAGE = 0.5
 FIXED = {
     "ambiguous_solution": 0.5,
@@ -104,6 +108,16 @@ def flips(targets: dict[str, int], fracs: dict[str, tuple[float, float, float]],
     if len(moves) > 1:
         alts.append({**targets, **moves})
     return alts
+
+
+def alpaca_factor(ratio: float, support: int | None = None) -> float:
+    """alpaca_disagrees: `graded` from 1.0 to ALPACA_THRESHOLD, with its lowest value raised for a
+    mutation-supported GD: 0.5 with no doubled mutations, ALPACA_MUT_FLOOR at >= MIN_SUPPORT."""
+    x = float(np.clip((ratio - 1.0) / (ALPACA_THRESHOLD - 1.0), 0.0, 1.0))
+    lo = 0.5
+    if support is not None:
+        lo = 0.5 + (ALPACA_MUT_FLOOR - 0.5) * float(np.clip(support / MIN_SUPPORT, 0.0, 1.0))
+    return lo + (1 - lo) * x
 
 
 def majority_prior(targets: dict[str, int], fracs: dict[str, tuple[float, float, float]],

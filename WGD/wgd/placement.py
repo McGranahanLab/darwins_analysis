@@ -677,6 +677,11 @@ def _complexity(f: Fill) -> tuple[int, int, int]:
             sum(bool(a.get("relaxed")) for a in f.added), len(f.added))
 
 
+def _alpaca_detail(ratio: float, clone: str, support: int | None) -> str:
+    """`1.03:clone5`, or `1.03:clone5:mut21` when doubled mutations soften the factor."""
+    return f"{ratio:.2f}:{clone}" + (f":mut{support}" if support is not None else "")
+
+
 def _solution(fixed: dict[str, int], f: Fill) -> str:
     """GDs per clone after a fill, e.g. `clone3=1,clone4=1,clone5=1*` (* = forced), `none`."""
     gds = dict(fixed)
@@ -803,10 +808,16 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         gds: dict[str, int] = {}
         if tree is not None:
             gds = _gd_vector(te, cls, tree, int(num_clonal.get(t) or 0))
-            r = [(maxab.get((t, c)), c) for c in gds if maxab.get((t, c)) is not None]
+            # mutation support per clone (largest count of its mutation-supported GDs)
+            mut_sup = {}
+            for e in te:
+                if e.get("is_subclonal_mutation_supported") and e.get("supporting_mut_count") is not None:
+                    mut_sup[e["placed_clone"]] = max(mut_sup.get(e["placed_clone"], 0), e["supporting_mut_count"])
+            r = [(Q.alpaca_factor(maxab[(t, c)], mut_sup.get(c)), _alpaca_detail(maxab[(t, c)], c, mut_sup.get(c)))
+                 for c in gds if maxab.get((t, c)) is not None]
             if r:
-                rmin, cmin = min(r)
-                factors.append(("alpaca_disagrees", Q.graded(rmin, Q.ALPACA_THRESHOLD, 1.0), f"{rmin:.2f}:{cmin}"))
+                fmin, dmin = min(r)
+                factors.append(("alpaca_disagrees", fmin, dmin))
             # reversion: a clone strictly below a doubled clone that looks diploid again
             doubled = set(gds)
             rev = [c for c in tree.parent if any(a in doubled for a in tree.ancestors(c))
@@ -871,7 +882,8 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                 ef.append(("low_mut_support", Q.graded(e["supporting_mut_count"], Q.MIN_SUPPORT), str(e["supporting_mut_count"])))
             r = maxab.get((t, c))
             if r is not None:
-                ef.append(("alpaca_disagrees", Q.graded(r, Q.ALPACA_THRESHOLD, 1.0), f"{r:.2f}:{c}"))
+                sup_e = (e["supporting_mut_count"] if e.get("is_subclonal_mutation_supported") else None)
+                ef.append(("alpaca_disagrees", Q.alpaca_factor(r, sup_e), _alpaca_detail(r, c, sup_e)))
             for fl in e["flags"]:
                 if fl.startswith("minority_coverage("):
                     cov, reg = min((float(x.split(":")[1]), x.split(":")[0])

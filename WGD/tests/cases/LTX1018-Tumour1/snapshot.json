@@ -12,8 +12,8 @@
   ],
   "LTX1018-Tumour1:clone3:1": [
    "mutation",
-   0.327,
-   "low_mut_support(8);alpaca_disagrees(1.23:clone3);ambiguous_solution(alt:clone1=1,clone3=2|clone1=1,clone3=1|clone1=1,clone11=1,clone3=1)"
+   0.406,
+   "low_mut_support(8);alpaca_disagrees(1.23:clone3:mut8);ambiguous_solution(alt:clone1=1,clone3=2|clone1=1,clone3=1|clone1=1,clone11=1,clone3=1)"
   ]
  },
  "gds": "clone1=1,clone2=1,clone3=1",

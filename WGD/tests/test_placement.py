@@ -273,8 +273,12 @@ def test_quality_low_mut_support_and_alpaca():
     res = run(events((False, True, "4", ["R1"])), mc=mut_counts(c4=5), ploidy_rule="fill", regions=reg,
               summary=summ, rt=ratios(c4=1.25))
     q = res.tumours.row(0, named=True)
-    assert q["quality_code"] == "low_mut_support(5);alpaca_disagrees(1.25:clone4)"
-    assert q["quality"] == pytest.approx(0.75 * 0.75, abs=1e-3)
+    # 5 doubled mutations: the ALPACA factor's lowest value is 0.7 (halfway to 0.9), so 0.85 at 1.25
+    assert q["quality_code"] == "low_mut_support(5);alpaca_disagrees(1.25:clone4:mut5)"
+    assert q["quality"] == pytest.approx(0.75 * 0.85, abs=1e-3)
+    from wgd import quality as Q
+    assert Q.alpaca_factor(1.0) == 0.5 and Q.alpaca_factor(1.0, 0) == 0.5
+    assert Q.alpaca_factor(1.0, 21) == pytest.approx(0.9) and Q.alpaca_factor(1.5, 21) == 1.0
 
 
 def test_compare():

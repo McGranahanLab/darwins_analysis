@@ -53,3 +53,9 @@ status = "resolved"
 agreed = "2026-11-12: clonal, but weaker evidence than LTX0981 (every sample borderline at the first level)"
 ploidy_prior = "applied"
 max_quality = 0.5
+
+["LTX1348-Tumour1"]
+gds = "clone5=1,clone6=1"
+status = "resolved"
+agreed = "2026-11-12: two parallel mutation-supported GDs (LN clone5, primary clone6); ALPACA puts their shared gain on the absent clone1, so its low clone5 ratio should not weigh much"
+min_quality = 0.8

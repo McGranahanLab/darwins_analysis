@@ -10,6 +10,8 @@ alpaca_wgd_threshold = 1.5   # notebook rule only: alpaca_called resolved iff ev
 ploidy_margin = 0.10         # borderline_ploidy full credit at this distance from 0.5; also "clear" for the prior
 min_support = 10             # low_mut_support full credit
 alpaca_threshold = 1.5       # alpaca_disagrees full credit at this max(ratio_A, ratio_B)
+alpaca_mut_floor = 0.9       # alpaca_disagrees lowest value for a mutation-supported GD with >= min_support doubled
+                             # mutations (0.5 without mutations, linear in between); LTX1348
 majority_coverage = 0.5      # minority_coverage: 0.2 at 0, 0.5 at this coverage
 ambiguity_majorities = [0.4, 0.6]  # ambiguous_solution: other majority cut-offs tried
 

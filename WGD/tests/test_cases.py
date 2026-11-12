@@ -52,6 +52,8 @@ def test_agreed_answer(tumour):
     assert got["status"] == a["status"]
     if "max_quality" in a:
         assert got["quality"] <= a["max_quality"]
+    if "min_quality" in a:
+        assert got["quality"] >= a["min_quality"]
     if "ploidy_prior" in a:
         assert (got["ploidy_prior"] or "").startswith(a["ploidy_prior"])
 
