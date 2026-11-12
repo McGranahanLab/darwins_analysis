@@ -276,6 +276,20 @@ This replaces the per-event rules C and G with one tumour-level rule. PGDD's plo
 
 All six cases were replayed together from the real PGDD files.
 
+### Majority ploidy prior (2026-11-12, Piotr; LTX0981-T1)
+
+This runs before the fill (`Q.majority_prior`, needs the step 03 summary). Samples are **clear** when their deciding genome fraction is at least `ploidy_margin` (0.10) from 0.5. If more than half of all samples (`prior_min_clear_fraction`) are clear at the same level k, any **borderline** sample one level off k gets k as its target. Borderline means less than `prior_band` (default = `ploidy_margin`) from 0.5.
+- A sample one level below k is **raised** (clonal-GD prior). A sample one level above k is **lowered** (diploid prior when k = 0; Piotr: "a diploid tumour is an even stronger prior than a clonal genome doubling").
+- The fill runs with both the strict and the moved targets. The moved targets are used only if they give a **simpler** fill: fewer missing/excess GDs, then fewer forced (relaxed-pass) GDs, then fewer GDs. Set `prior_require_simpler = false` to always use them. `tumours_placed.tsv` → `ploidy_prior` records `applied:` or `not_simpler:` with the moves.
+- **Score:** `prior_raised` runs from 0.6 at the edge of the band to 0.85 next to 0.5. `prior_lowered` runs from 0.75 to 0.95 and is tumour-only, because no GD carries it. Moved samples are left out of `borderline_ploidy` and `ambiguous_solution` (flips back to the strict targets), and `fill_count_differs` is not charged, so the uncertainty counts once. The ordering is: all samples clear (1.0) > prior (0.6–0.95) > strict multi-GD solution.
+- A fill GD on the MRCA counts as clonal for `sub_class`.
+- All values are in `params.toml` (`--params`). The ALPACA check on the root clone is not required (Piotr, 2026-11-12).
+
+**LTX0981-T1** (`templates/cp_table.csv`, `ratio_scores.csv`, b9a0443): R1–R3 have `genome_frac_nMaj2` ≈ 0.96, FR1 has 0.49, and FR1 = clone1 0.30 + clone7 0.42 + clone10 0.28.
+- **Strict** (FR1 = 0): clone1 and clone2 would double FR1, so the fill takes clone5 (R1), clone4 (R3) and a forced clone3 for R2 (23%). That's 3 GDs, quality 0.056.
+- **With the prior** (FR1 raised): one GD on clone1 (ALPACA ratio_A 1.87), quality 0.825 (`prior_raised(FR1:0.010)`). With FR1 at 0.9: clone1, quality 1.0.
+- The PGDD event used in the test (one ploidy-only GD in R1–R3) is assumed. The real PGDD output for LTX0981 isn't in the mock.
+
 ## 5b. ALPACA ratio threshold: concerns (Darwin, 2026-11-09; revisit later, 1.5 in use)
 
 `ratio_X` = the length-weighted mean of child CN / parent CN over segments where the parent allele is > 0. The MRCA is compared with a diploid 1|1. A clean doubling gives 2 and no change gives 1, so 1.5 is the natural midpoint. **Decision: use 1.5 for now** (Piotr).

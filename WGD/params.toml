@@ -1,0 +1,34 @@
+# Step 04 parameters (wgd/params.py holds the same defaults; tests check they match).
+# Pass another file with `pixi run place_events ... --params <file>`; missing keys keep their default.
+
+# ---- ploidy fill ----
+majority = 0.5               # a clone's subtree carries a sample when > this fraction of it
+min_coverage = 0.1           # relaxed fill pass: smallest share of a sample a clone must cover
+alpaca_wgd_threshold = 1.5   # notebook rule only: alpaca_called resolved iff every ratio > this
+
+# ---- quality ----
+ploidy_margin = 0.10         # borderline_ploidy full credit at this distance from 0.5; also "clear" for the prior
+min_support = 10             # low_mut_support full credit
+alpaca_threshold = 1.5       # alpaca_disagrees full credit at this max(ratio_A, ratio_B)
+majority_coverage = 0.5      # minority_coverage: 0.2 at 0, 0.5 at this coverage
+ambiguity_majorities = [0.4, 0.6]  # ambiguous_solution: other majority cut-offs tried
+
+# ---- majority ploidy prior (Piotr, 2026-11-12, LTX0981-Tumour1) ----
+# If more than prior_min_clear_fraction of samples are clearly (margin >= ploidy_margin) at the
+# same GD level, borderline samples one level off are moved to it: raised (clonal-GD prior) or
+# lowered (diploid prior).
+prior_enabled = true
+# prior_band = 0.10          # borderline = within this of 0.5; unset = ploidy_margin
+prior_min_clear_fraction = 0.5
+prior_require_simpler = true # use the prior only if the fill gets simpler (fewer missing, forced, then added GDs)
+prior_raised_factor = [0.6, 0.85]   # quality factor: [edge of band, next to 0.5]
+prior_lowered_factor = [0.75, 0.95] # diploid prior is stronger, so a smaller penalty
+
+[fixed]                      # fixed quality factors
+ambiguous_solution = 0.5
+reversion = 0.2
+ploidy_path_mismatch = 0.5
+unplaced_events = 0.5
+multicluster_parent_child = 0.7
+fill_tie = 0.8
+fill_count_differs = 0.9

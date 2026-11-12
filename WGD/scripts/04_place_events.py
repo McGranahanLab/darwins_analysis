@@ -14,6 +14,7 @@ and `alpaca` (for the reversion flag). `--summary` defaults to
 mutation-supported GDs are fixed, then GDs are added until every sample reaches its PGDD
 num_gds without exceeding it (see wgd.placement.fill_ploidy); `notebook` runs the old
 rules C and G.
+`--params`: tunable values (default `params.toml`), recorded in run.json.
 Writes `<out>/04_placed/`: events_placed.tsv, tumours_placed.tsv, run.json.
 """
 
@@ -28,6 +29,7 @@ import polars as pl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from wgd import params as P  # noqa: E402
 from wgd import placement  # noqa: E402
 
 
@@ -41,10 +43,13 @@ def main() -> None:
     ap.add_argument("--alpaca-score", choices=("ratio_A", "max_AB"), default="ratio_A")
     ap.add_argument("--ploidy-rule", choices=("fill", "notebook"), default="fill",
                     help="placement of ploidy-only GDs (default: tumour-level fill; notebook = old rules C and G)")
+    ap.add_argument("--params", type=Path, default=Path(__file__).resolve().parents[1] / "params.toml",
+                    help="tunable parameters (default: WGD/params.toml; see wgd/params.py)")
     args = ap.parse_args()
     if (args.qc_table is None) != (args.release_dir is None):
         ap.error("give both --qc-table and --release-dir, or neither")
 
+    params = P.load(args.params)
     s01 = args.out / "01_pgdd"
     tx = args.tx_data_dir
     summary_path = args.summary or args.out / "03_summary" / "pgdd_cohort_gd_summary.tsv"
@@ -68,7 +73,7 @@ def main() -> None:
         summary=summary,
         alpaca_cn=pl.read_parquet(tx / "alpaca.parquet") if (tx / "alpaca.parquet").exists() else None,
         qc_tumours=qc, score=args.alpaca_score, ploidy_rule=args.ploidy_rule,
-        regions=pl.read_parquet(s01 / "pgdd_regions.parquet"))
+        regions=pl.read_parquet(s01 / "pgdd_regions.parquet"), params=params)
 
     out = args.out / "04_placed"
     out.mkdir(parents=True, exist_ok=True)
@@ -90,6 +95,10 @@ def main() -> None:
                                 .str.replace(r"^\d+(,\d+)+$", "multi_unresolved").alias("k"))
                                 .group_by("k").len().sort("k").iter_rows()) if res.events.height else {}),
         "H_mismatch_tumours": t.filter("H_mismatch")["tumour_id"].to_list(),
+        "ploidy_prior": dict(t.filter(pl.col("ploidy_prior").is_not_null())
+                             .select("tumour_id", "ploidy_prior").iter_rows()),
+        "params_file": str(args.params),
+        "params": params.to_dict(),
         "log": res.log,
     }
     (out / "run.json").write_text(json.dumps(run, indent=2) + "\n")

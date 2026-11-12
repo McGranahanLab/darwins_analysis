@@ -21,6 +21,7 @@ Deferred work. Decisions and their reasoning are in `docs/previous_analysis_logi
   Suggested output: `05_table/review.tsv` (tumour_id, category, reason) plus counts in a run summary.
 - [x] Quality: continuous per-tumour score (doc K'', `wgd/quality.py`, 2026-11-10).
 - [ ] Quality: calibrate weights on the cohort (defaults accepted for now, 2026-11-10). Also decide whether `borderline_ploidy` should use only the first GD level (LTX0025, LTX0073). On the real cases, `alpaca_disagrees` fires for most subclonal GDs (ratios 1.0–1.3), so check whether ALPACA ratios are informative for subclonal GDs before keeping that factor at full weight.
+- [ ] Majority ploidy prior (2026-11-12, LTX0981): count `ploidy_prior` applied / not_simpler on the real cohort; check that lowering 2→1 should use the diploid (stronger) factor; calibrate `prior_*_factor` (defaults accepted for now).
 - [ ] Open decisions in doc §6: second GDs, triage classes, multi-cluster events with non-adjacent clusters or more than 2 clusters.
 
 ## Upstream

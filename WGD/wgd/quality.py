@@ -25,6 +25,14 @@ Fixed factors:
   multicluster_parent_child 0.7
   fill_tie            0.8   a fill GD was chosen by the ALPACA score alone
   fill_count_differs  0.9   the fill added a different number of GDs than PGDD's ploidy-only events
+Majority ploidy prior (Piotr, 2026-11-12, LTX0981-Tumour1; `majority_prior`):
+  prior_raised        a borderline sample was raised to the level most samples clearly
+                      share (clonal-GD prior); 0.6 at the edge of the band, 0.85 next to 0.5
+  prior_lowered       a borderline sample was lowered to it (diploid prior, stronger);
+                      0.75 at the edge of the band, 0.95 next to 0.5
+  Moved samples are left out of borderline_ploidy and ambiguous_solution: their
+  uncertainty is counted once, here. prior_lowered is tumour-only (no GD carries it).
+All values are in `wgd.params` / `params.toml`.
 GD order is deliberately not used (Piotr, 2026-11-10).
 
 Per-event score (2026-11-11): the same factors restricted to one GD:
@@ -98,12 +106,52 @@ def flips(targets: dict[str, int], fracs: dict[str, tuple[float, float, float]],
     return alts
 
 
+def majority_prior(targets: dict[str, int], fracs: dict[str, tuple[float, float, float]],
+                   band: float, min_clear_fraction: float) -> tuple[dict[str, int], dict[str, tuple[int, int, float]]]:
+    """Majority ploidy prior (Piotr, 2026-11-12, LTX0981-Tumour1).
+
+    Samples are *clear* when their margin (`ploidy_margins`) is >= PLOIDY_MARGIN. If more than
+    `min_clear_fraction` of all samples are clear at the same level k, a borderline sample one
+    level off k (its deciding fraction less than `band` from 0.5) is moved to k: raised when
+    the majority is doubled more (clonal-GD prior), lowered when it is doubled less (diploid
+    prior when k = 0). Returns (new targets, {sample: (old, new, distance from 0.5)}).
+    """
+    margins = ploidy_margins(targets, fracs)
+    clear = [targets[s] for s, m in margins.items() if m >= PLOIDY_MARGIN]
+    if not clear:
+        return dict(targets), {}
+    k = max(set(clear), key=lambda v: (clear.count(v), -v))
+    if clear.count(k) <= min_clear_fraction * len(targets):
+        return dict(targets), {}
+    moves = {}
+    for s, n in targets.items():
+        f = fracs.get(s)
+        if f is None or margins.get(s, 0.0) >= PLOIDY_MARGIN:
+            continue
+        if n == k - 1 and f[k - 1] is not None:      # fraction for >= k GDs, just below 0.5
+            d = 0.5 - f[k - 1]
+        elif n == k + 1 and n <= 3 and f[n - 1] is not None:  # fraction for >= n GDs, just above 0.5
+            d = f[n - 1] - 0.5
+        else:
+            continue
+        if 0 <= d < band:
+            moves[s] = (n, k, float(d))
+    return {**targets, **{s: m[1] for s, m in moves.items()}}, moves
+
+
+def prior_factor(d: float, band: float, lo_hi: tuple[float, float]) -> float:
+    """`hi` for a sample right at 0.5, falling linearly to `lo` at the edge of the band."""
+    lo, hi = lo_hi
+    return hi - (hi - lo) * float(np.clip(d / band, 0.0, 1.0))
+
+
 def forced(coverage: float) -> float:
     """Heavy penalty for a forced (relaxed-pass) GD: 0.2 at 0 coverage, 0.5 at >= MAJORITY_COVERAGE."""
     return 0.2 + 0.3 * float(np.clip(coverage / MAJORITY_COVERAGE, 0.0, 1.0))
 
 
-TUMOUR_ONLY = ("borderline_ploidy", "ploidy_path_mismatch", "unplaced_events", "fill_count_differs")
+TUMOUR_ONLY = ("borderline_ploidy", "ploidy_path_mismatch", "unplaced_events", "fill_count_differs",
+               "prior_lowered")
 
 
 def aggregate(event_factors: list[list], tumour_factors: list) -> tuple[float, str | None]:

@@ -167,7 +167,7 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
                 continue
             c = e["clone"]
             n_at[c] += 1
-            if not e["is_clonal"]:
+            if not e["is_clonal"] and c != tree.mrca:  # a fill GD on the MRCA is clonal
                 subclonal.append(c)
             q = e["event_quality"]
             if q is not None and (c not in eq or q < eq[c][0]):

@@ -40,6 +40,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from wgd import params as P
 from wgd import quality as Q
 
 ALPACA_WGD_THRESHOLD = 1.5
@@ -197,13 +198,14 @@ def triage(tumours: pl.DataFrame, events: pl.DataFrame) -> dict[str, str]:
 # ---- ploidy fill (tumour-level rule replacing C and G) ---------------------------
 
 def sample_levels(tree: Tree, props: dict[str, dict[str, float]], gds: dict[str, int],
-                  majority: float = MAJORITY) -> dict[str, int]:
+                  majority: float | None = None) -> dict[str, int]:
     """GD level of each sample under a placement `gds` (clone -> number of GDs on it).
 
     A clone's count is the GDs on its root path. A sample's level is the largest k
     such that clones with count >= k make up more than `majority` of the sample
     (the sample-level analogue of PGDD's >= 50%-of-genome rule).
     """
+    majority = MAJORITY if majority is None else majority
     count = {c: sum(gds.get(a, 0) for a in [c] + tree.ancestors(c)) for c in tree.parent}
     out = {}
     for s, p in props.items():
@@ -231,7 +233,7 @@ class Fill:
 
 
 def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[str, int],
-                fixed: dict[str, int], score: dict[str, float], majority: float = MAJORITY) -> Fill:
+                fixed: dict[str, int], score: dict[str, float], majority: float | None = None) -> Fill:
     """Add GDs until every sample's level reaches its PGDD `num_gds`, never exceeding it.
 
     Each step adds one GD on the clone that
@@ -250,6 +252,7 @@ def fill_ploidy(tree: Tree, props: dict[str, dict[str, float]], targets: dict[st
       (5) has the highest ALPACA score; (6) comes first in the tree.
     Cell fractions are summed over samples. A clone can take several GDs.
     """
+    majority = MAJORITY if majority is None else majority
     gds = dict(fixed)
     lv = sample_levels(tree, props, gds, majority)
     over = {s: lv[s] - targets[s] for s in props if lv[s] > targets[s]}
@@ -331,14 +334,19 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                  ratios: pl.DataFrame, clone_proportions: pl.DataFrame,
                  summary: pl.DataFrame | None = None, alpaca_cn: pl.DataFrame | None = None,
                  qc_tumours: set[str] | None = None, score: str = "ratio_A",
-                 ploidy_rule: str = "fill", regions: pl.DataFrame | None = None) -> Placement:
+                 ploidy_rule: str = "fill", regions: pl.DataFrame | None = None,
+                 params: P.Params | None = None) -> Placement:
     """Run stages B–I and K1 on QC-passed tumours.
 
     `score`: ALPACA column used as a tie-breaker. `ploidy_rule`: `fill` (default,
     2026-11-09) places ploidy-only GDs per tumour with `fill_ploidy`, replacing
     rules C and G; `notebook` runs the original rules C and G. `regions`
     (pgdd_GDs_per_region) gives each sample's target `num_gds`; required for `fill`.
+    `params`: tunable values (`wgd.params`); defaults when None. With `fill` and a `summary`,
+    the majority ploidy prior (`Q.majority_prior`) may move borderline samples' targets first.
     """
+    params = params or P.Params()
+    P.apply(params)
     log: list[str] = []
     if score == "max_AB":
         ratios = ratios.with_columns(pl.max_horizontal("ratio_A", "ratio_B").alias("max_AB"))
@@ -495,6 +503,8 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
     # fill: per tumour, fix clonal + mutation-supported GDs, then add the fewest GDs that
     # bring every sample to its PGDD num_gds. PGDD's ploidy-only events are superseded.
     fill_info: dict[str, Fill | str] = {}
+    prior_info: dict[str, dict] = {}   # tumour -> {"applied": bool, "moves": {...}, "targets": {...}}
+    fracs_all = _fracs_by_tumour(summary)
     if ploidy_rule == "fill":
         if regions is None:
             raise ValueError("ploidy_rule='fill' needs `regions` (pgdd_GDs_per_region)")
@@ -529,11 +539,24 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
             for e in fixed_ev:
                 c = clone_of(e["placed_as"])
                 fixed[c] = fixed.get(c, 0) + 1
-            res = fill_ploidy(tree, props, targets, fixed, {c: ratio_rows.get((t, c)) for c in tree.parent})
+            sc = {c: ratio_rows.get((t, c)) for c in tree.parent}
+            res = fill_ploidy(tree, props, targets, fixed, sc)
+            if params.prior_enabled and fracs_all.get(t):
+                new_targets, moves = Q.majority_prior(targets, fracs_all[t], params.band,
+                                                      params.prior_min_clear_fraction)
+                if moves:
+                    res_prior = fill_ploidy(tree, props, new_targets, fixed, sc)
+                    applied = not params.prior_require_simpler or _complexity(res_prior) < _complexity(res)
+                    prior_info[t] = {"applied": applied, "moves": moves, "targets": new_targets}
+                    if applied:
+                        res = res_prior
             fill_info[t] = res
             for e in ploidy_ev:
                 e["placed_as"], e["placement_method"] = "superseded_by_fill", "fill"
+            raised = ({s_: m for s_, m in prior_info[t]["moves"].items() if m[1] > m[0]}
+                      if prior_info.get(t, {}).get("applied") else {})
             for i, a in enumerate(res.added, 1):
+                mine = {s_: m for s_, m in raised.items() if s_ in a["samples"]}
                 ev.append({**template, "GD_event": f"fill{i}", "GD_event_id": f"{t}_fill{i}", "tumour_id": t,
                            "is_clonal": False, "is_subclonal_mutation_supported": False,
                            "samples": ",".join(a["samples"]), "placed_as": f"fill_{a['clone']}",
@@ -541,7 +564,9 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                            "fill_alternatives": ",".join(a["alternatives"]) or None,
                            "flags": (["fill_tie"] if a["alternatives"] else [])
                                     + ([f"minority_coverage({','.join(f'{region_label(k)}:{v:.2f}' for k, v in a['coverage'].items())})"]
-                                       if a.get("relaxed") else [])})
+                                       if a.get("relaxed") else [])
+                                    + ([f"prior_raised({','.join(f'{region_label(k)}:{m[2]:.3f}' for k, m in mine.items())})"]
+                                       if mine else [])})
             if len(res.added) != len(ploidy_ev):
                 log.append(f"fill {t}: {len(res.added)} GDs added for {len(ploidy_ev)} PGDD ploidy-only events")
 
@@ -553,6 +578,7 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
     h_mismatch = {}
     if summary is not None:
         max_gds = dict(summary.group_by("tumour_id").agg(pl.col("num_gds").max()).iter_rows())
+        max_gds.update({t: max(p["targets"].values()) for t, p in prior_info.items() if p["applied"]})
         for t in {e["tumour_id"] for e in ev}:
             te = [e for e in ev if e["tumour_id"] == t]
             if all(e["is_clonal"] for e in te) or t not in trees:
@@ -587,7 +613,7 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
 
     # quality (wgd.quality): per tumour, product of evidence factors
     qual = _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpaca_cn,
-                           tumours, h_mismatch, fill_info, ploidy_rule)
+                           tumours, h_mismatch, fill_info, ploidy_rule, prior_info, params)
 
     # per-tumour status (notebook queue files): no_gd / clonal_gd_only resolved,
     # alpaca_called resolved iff every event's ratio > 1.5, mut_supported unresolved
@@ -618,15 +644,41 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                      "H_summary_max_gds": h_mismatch.get(t, (None, None))[0],
                      "H_tree_path_max_gds": h_mismatch.get(t, (None, None))[1],
                      "quality": qual.get(t, (None, None, None))[0], "quality_code": qual.get(t, (None, None, None))[1],
-                     "tumour_factors": qual.get(t, (None, None, None))[2]})
+                     "tumour_factors": qual.get(t, (None, None, None))[2],
+                     "ploidy_prior": _prior_text(prior_info.get(t))})
 
     ev_df = pl.DataFrame([{**{k: v for k, v in e.items() if k != "flags"}, "flags": ";".join(e["flags"]) or None}
                           for e in ev], infer_schema_length=None)
     tumour_schema = {"tumour_id": pl.Utf8, "triage": pl.Utf8, "status": pl.Utf8, "has_alpaca_tree": pl.Boolean,
                      "n_events": pl.Int64, "n_unplaced": pl.Int64, "fill": pl.Utf8, "H_mismatch": pl.Boolean,
                      "H_summary_max_gds": pl.Int64, "H_tree_path_max_gds": pl.Int64,
-                     "quality": pl.Float64, "quality_code": pl.Utf8, "tumour_factors": pl.Utf8}
+                     "quality": pl.Float64, "quality_code": pl.Utf8, "tumour_factors": pl.Utf8,
+                     "ploidy_prior": pl.Utf8}
     return Placement(ev_df, pl.DataFrame(rows, schema=tumour_schema).sort("tumour_id"), log)
+
+
+def _fracs_by_tumour(summary: pl.DataFrame | None) -> dict[str, dict[str, tuple]]:
+    """tumour -> sample key -> (genome_frac_nMaj2, nMaj3, nMaj4), from the step 03 summary."""
+    out: dict[str, dict[str, tuple]] = {}
+    if summary is not None and {"genome_frac_nMaj2", "genome_frac_nMaj3", "genome_frac_nMaj4"} <= set(summary.columns):
+        for r in summary.iter_rows(named=True):
+            out.setdefault(r["tumour_id"], {})[sample_key(r["sample_name_hash"])] = (
+                r["genome_frac_nMaj2"], r["genome_frac_nMaj3"], r["genome_frac_nMaj4"])
+    return out
+
+
+def _complexity(f: Fill) -> tuple[int, int, int]:
+    """Smaller is simpler: (GDs still missing or in excess, forced relaxed-pass GDs, GDs added)."""
+    return (sum(f.remaining.values()) + sum(f.over.values()),
+            sum(bool(a.get("relaxed")) for a in f.added), len(f.added))
+
+
+def _prior_text(p: dict | None) -> str | None:
+    """e.g. `applied:FR1 0>1 (0.010)` or `not_simpler:...` (strict targets kept)."""
+    if not p:
+        return None
+    moves = ",".join(f"{region_label(s)} {o}>{n} ({d:.3f})" for s, (o, n, d) in p["moves"].items())
+    return f"{'applied' if p['applied'] else 'not_simpler'}:{moves}"
 
 
 def _gd_vector(te: list[dict], cls: str, tree: Tree, num_clonal: int) -> dict[str, int]:
@@ -644,16 +696,15 @@ def _gd_vector(te: list[dict], cls: str, tree: Tree, num_clonal: int) -> dict[st
 
 
 def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpaca_cn,
-                    tumours, h_mismatch, fill_info, ploidy_rule) -> dict[str, tuple[float, str | None]]:
+                    tumours, h_mismatch, fill_info, ploidy_rule, prior_info=None,
+                    params: P.Params | None = None) -> dict[str, tuple[float, str | None]]:
+    params = params or P.Params()
+    prior_info = prior_info or {}
     targets_all: dict[str, dict[str, int]] = {}
     if regions is not None:
         for t, sid, n in regions.select("tumour_id", "sample_id", "num_gds").iter_rows():
             targets_all.setdefault(t, {})[sample_key(sid)] = int(n)
-    fracs_all: dict[str, dict[str, tuple]] = {}
-    if summary is not None and {"genome_frac_nMaj2", "genome_frac_nMaj3", "genome_frac_nMaj4"} <= set(summary.columns):
-        for r in summary.iter_rows(named=True):
-            fracs_all.setdefault(r["tumour_id"], {})[sample_key(r["sample_name_hash"])] = (
-                r["genome_frac_nMaj2"], r["genome_frac_nMaj3"], r["genome_frac_nMaj4"])
+    fracs_all = _fracs_by_tumour(summary)
     maxab = {(r["tumour_id"], r["clone"]): max(r["ratio_A"], r["ratio_B"])
              for r in ratios.iter_rows(named=True) if r["ratio_A"] is not None and r["ratio_B"] is not None}
     med_total = {}
@@ -669,6 +720,23 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         factors: list[tuple[str, float, str]] = []
         targets = targets_all.get(t, {})
         fracs = fracs_all.get(t, {})
+        prior = prior_info.get(t) if prior_info.get(t, {}).get("applied") else None
+        if prior:
+            # moved samples count once, through prior_raised / prior_lowered, not as borderline
+            # or as flips that undo the prior
+            targets = prior["targets"]
+            fracs = {s: f for s, f in fracs.items() if s not in prior["moves"]}
+            for s, (o, n, d) in prior["moves"].items():
+                up = n > o
+                factors.append(("prior_raised" if up else "prior_lowered",
+                                Q.prior_factor(d, params.band, params.prior_raised_factor if up
+                                               else params.prior_lowered_factor),
+                                f"{region_label(s)}:{d:.3f}"))
+            worst = {}
+            for x in factors:
+                if x[0] not in worst or x[1] < worst[x[0]][1]:
+                    worst[x[0]] = x
+            factors = list(worst.values())
 
         margins = Q.ploidy_margins(targets, fracs)
         if margins:
@@ -701,7 +769,8 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         f = fill_info.get(t)
         if isinstance(f, Fill):
             n_pgdd = sum(e["placed_as"] == "superseded_by_fill" for e in te)
-            if len(f.added) != n_pgdd:
+            # with the prior, a different count is the prior's doing and is already charged
+            if len(f.added) != n_pgdd and not prior:
                 factors.append(("fill_count_differs", Q.FIXED["fill_count_differs"], f"{len(f.added)} vs {n_pgdd}"))
 
         ambiguous_clones: set[str] = set()
@@ -745,7 +814,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
 
                     base = solve(targets)
                     alts = [solve(tg) for tg in Q.flips(targets, fracs, margins)] if fracs else []
-                    alts += [solve(targets, 0.4), solve(targets, 0.6)]
+                    alts += [solve(targets, m) for m in params.ambiguity_majorities]
                     diff = []
                     for a in alts:
                         if a is not None and base is not None and a != base and a not in diff:
@@ -782,6 +851,12 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                 ef.append(("multicluster_parent_child", Q.FIXED["multicluster_parent_child"], ""))
             if "fill_tie" in e["flags"]:
                 ef.append(("fill_tie", Q.FIXED["fill_tie"], e.get("fill_alternatives") or ""))
+            for fl in e["flags"]:
+                if fl.startswith("prior_raised("):
+                    d, reg = max((float(x.split(":")[1]), x.split(":")[0])
+                                 for x in fl[len("prior_raised("):-1].split(","))
+                    ef.append(("prior_raised", Q.prior_factor(d, params.band, params.prior_raised_factor),
+                               f"{reg}:{d:.3f}"))
             if c in ambiguous_clones:
                 ef.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], amb_detail))
             # reversion: charged to the nearest doubled ancestor of the reverted clone
@@ -797,6 +872,9 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         amb = [x for x in factors if x[0] == "ambiguous_solution"]
         if amb and not any(f[0] == "ambiguous_solution" for e in te for f in e.get("_factors", [])):
             tumour_only.append(list(amb[0]))  # e.g. an alternative adds a GD where there is none
+        raised = [x for x in factors if x[0] == "prior_raised"]
+        if raised and not any(f[0] == "prior_raised" for e in te for f in e.get("_factors", [])):
+            tumour_only.append(list(raised[0]))  # raised sample doubled by a fixed (clonal / mutation) GD
         q, code = Q.aggregate([e.get("_factors", []) for e in te], tumour_only)
         out[t] = (q, code, json.dumps(tumour_only))
     for e in ev:

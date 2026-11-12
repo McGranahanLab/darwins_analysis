@@ -7,10 +7,14 @@ Tree (ALPACA):        c1 (MRCA) ── c2 ──┬── c4     R1 = 100% c4
 
 from __future__ import annotations
 
+import json
+
 import polars as pl
 import pytest
 
 from wgd import compare, final_table, placement
+from wgd import params as P
+from wgd import quality as Q
 
 T = "LTX0901-Tumour1"
 PARENT = {"clone1": "diploid", "clone2": "clone1", "clone3": "clone1", "clone4": "clone2", "clone5": "clone2"}
@@ -563,3 +567,126 @@ def test_rejection_keeps_mutation_supported_and_reports():
     assert rep.height == 1 and r["wgd_event_id"] == f"{T}:clone5:1" and r["source"] == "fill"
     assert r["total_gds_before"] == 2 and r["total_gds_after"] == 1
     assert r["tumour_quality_after"] > r["tumour_quality_before"]
+
+
+# ---- majority ploidy prior (Piotr, 2026-11-12) -------------------------------------
+
+LTX0981_PARENT = {"clone5": "clone10", "clone3": "clone7", "clone8": "clone5", "clone2": "clone1", "clone10": "clone2",
+                  "clone1": "diploid", "clone7": "clone2", "clone4": "clone7"}
+LTX0981_RATIO = {"clone5": (1.290, 1.170), "clone3": (1.365, 1.418), "clone8": (0.991, 1.012), "clone2": (1.004, 1.034),
+                 "clone10": (0.973, 0.986), "clone1": (1.874, 1.031), "clone7": (1.037, 0.963), "clone4": (1.168, 1.161)}
+LTX0981_CP = {"FR1": {"clone1": 0.3, "clone7": 0.42, "clone10": 0.28},
+              "R1": {"clone5": 0.47, "clone8": 0.53},
+              "R2": {"clone1": 0.61, "clone3": 0.2349397590361445, "clone5": 0.1550602409638554},
+              "R3": {"clone4": 1.0}}
+
+
+def ltx0981(fr1: float, **kw):
+    """templates/cp_table.csv + ratio_scores.csv (b9a0443). R1-R3 clearly doubled (0.96);
+    FR1 at `fr1`. The PGDD event is assumed: one ploidy-only GD in R1, R2, R3."""
+    p = LTX0981_PARENT
+    rt = pl.DataFrame({"tumour_id": [T] * len(p), "clone": list(p), "parent": list(p.values()),
+                       "ratio_A": [LTX0981_RATIO[c][0] for c in p], "ratio_B": [LTX0981_RATIO[c][1] for c in p]})
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": LTX0981_CP[s].get(c, 0.0)}
+                         for s in LTX0981_CP for c in p])
+    fr = {"FR1": (fr1, 0.05, 0.0), "R1": (0.96, 0.1, 0.0), "R2": (0.96, 0.1, 0.0), "R3": (0.96, 0.1, 0.0)}
+    reg = regions_df(T, {s: int(f[0] > 0.5) for s, f in fr.items()})
+    tu = tumour("Subclonal", 1)
+    res = placement.place_events(events((False, False, None, ["R1", "R2", "R3"])), tu, mut_counts(), rt, cpdf,
+                                 ploidy_rule="fill", regions=reg, summary=summary_df(T, fr), **kw)
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    return res, tb, {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v}
+
+
+def test_ltx0981_clonal_prior_raises_borderline_sample():
+    res, tb, gds = ltx0981(0.49)
+    t = res.tumours.row(0, named=True)
+    assert gds == {"clone1": 1} and t["status"] == "resolved"
+    assert t["ploidy_prior"] == "applied:FR1 0>1 (0.010)"
+    assert t["quality_code"] == "prior_raised(FR1:0.010)"           # no borderline_ploidy / ambiguous_solution
+    assert t["quality"] == pytest.approx(0.85 - 0.25 * 0.1, abs=1e-3)
+    assert tb["sub_class"].unique().to_list() == [None]             # the GD on the MRCA is clonal
+    e = res.events.filter(pl.col("placed_clone") == "clone1").row(0, named=True)
+    assert e["event_quality_code"] == "prior_raised(FR1:0.010)"
+
+
+def test_ltx0981_scores_order_clear_prior_strict():
+    """All doubled > clonal with the prior > the strict, complicated solution."""
+    clear = ltx0981(0.9)[0].tumours["quality"].item()
+    prior = ltx0981(0.49)[0].tumours["quality"].item()
+    res, _, gds = ltx0981(0.49, params=P.Params(prior_enabled=False))
+    strict = res.tumours["quality"].item()
+    assert sum(gds.values()) > 1 and res.tumours["ploidy_prior"].item() is None
+    assert clear == 1.0 > prior > 0.6 > strict
+
+
+def test_prior_needs_clear_majority_and_band():
+    # FR1 at 0.38 is outside the 0.1 band: kept at 0
+    assert ltx0981(0.38)[0].tumours["ploidy_prior"].item() is None
+    # a narrower band (tunable) also leaves 0.45 alone
+    assert ltx0981(0.45, params=P.Params(prior_band=0.04))[0].tumours["ploidy_prior"].item() is None
+    # LTX0535-like: every sample borderline, no clear majority -> no prior
+    tg, moves = Q.majority_prior({"a": 1, "b": 1, "c": 0}, {"a": (0.51, 0.1, 0), "b": (0.53, 0.1, 0),
+                                                            "c": (0.49, 0.1, 0)}, 0.1, 0.5)
+    assert moves == {}
+    # 2 of 4 clear is not a majority
+    tg, moves = Q.majority_prior({"a": 1, "b": 1, "c": 0, "d": 0}, {"a": (0.9, 0.1, 0), "b": (0.9, 0.1, 0),
+                                                                    "c": (0.49, 0.1, 0), "d": (0.45, 0.1, 0)}, 0.1, 0.5)
+    assert moves == {}
+
+
+def test_prior_second_gd_levels():
+    # majority clearly at 2 GDs, one sample just short of the second -> raised to 2
+    tg, moves = Q.majority_prior({"a": 2, "b": 2, "c": 1}, {"a": (0.95, 0.9, 0.1), "b": (0.95, 0.85, 0.1),
+                                                            "c": (0.95, 0.47, 0.1)}, 0.1, 0.5)
+    assert tg == {"a": 2, "b": 2, "c": 2} and moves["c"][:2] == (1, 2)
+    # majority at 1, one sample just over the second-GD line -> lowered to 1
+    tg, moves = Q.majority_prior({"a": 1, "b": 1, "c": 2}, {"a": (0.95, 0.1, 0), "b": (0.95, 0.2, 0),
+                                                            "c": (0.95, 0.53, 0)}, 0.1, 0.5)
+    assert tg == {"a": 1, "b": 1, "c": 1} and moves["c"] == (2, 1, pytest.approx(0.03))
+
+
+def test_diploid_prior_lowers_borderline_sample():
+    """Reverse case: R2, R3 clearly diploid, R1 just over 0.5 -> R1 lowered, no GD."""
+    reg = regions_df(T, {"R1": 1, "R2": 0, "R3": 0})
+    summ = summary_df(T, {"R1": (0.52, 0.05, 0.0), "R2": (0.1, 0.0, 0.0), "R3": (0.15, 0.0, 0.0)})
+    res = run(events((False, False, None, ["R1"])), ploidy_rule="fill", regions=reg, summary=summ, rt=ratios(c4=2.0))
+    t = res.tumours.row(0, named=True)
+    assert t["ploidy_prior"] == "applied:R1 1>0 (0.020)"
+    assert not [p for p in placed(res) if p and p.startswith("fill_")]
+    assert t["quality_code"] == "prior_lowered(R1:0.020)"
+    assert t["quality"] == pytest.approx(0.95 - 0.2 * 0.2, abs=1e-3)
+    tb = final_table.build_table(res.events, res.tumours, tumour(), ratios(c4=2.0))
+    assert tb["total_gds_per_tumour"].unique().to_list() == [0]
+    # the lowered prior survives rejection (tumour-level factor)
+    assert "prior_lowered" in json.loads(t["tumour_factors"])[0][0]
+
+
+def test_prior_skipped_when_not_simpler():
+    """A borderline sample whose move does not simplify the fill keeps its PGDD target."""
+    # R1, R2 clear at 1 and share clone2; R3 (clone3 only) at 0.47: raising it needs a second GD
+    reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 0})
+    summ = summary_df(T, {"R1": (0.9, 0.1, 0.0), "R2": (0.9, 0.1, 0.0), "R3": (0.47, 0.05, 0.0)})
+    res = run(events((False, False, None, ["R1", "R2"])), ploidy_rule="fill", regions=reg, summary=summ,
+              rt=ratios(c2=2.0))
+    t = res.tumours.row(0, named=True)
+    # strict: clone2 (1 GD); prior: clone1 (1 GD, raises all three) -> same complexity -> strict kept
+    assert t["ploidy_prior"] == "not_simpler:R3 0>1 (0.030)"
+    assert placed(res)[-1] == "fill_clone2"
+    # forcing it (prior_require_simpler = false) uses the prior
+    res = run(events((False, False, None, ["R1", "R2"])), ploidy_rule="fill", regions=reg, summary=summ,
+              rt=ratios(c2=2.0), params=P.Params(prior_require_simpler=False))
+    assert placed(res)[-1] == "fill_clone1"
+
+
+def test_params_toml_matches_defaults(tmp_path):
+    from pathlib import Path
+    shipped = P.load(Path(__file__).resolve().parents[1] / "params.toml")
+    assert shipped == P.Params()
+    f = tmp_path / "p.toml"
+    f.write_text("prior_band = 0.05\n[fixed]\nreversion = 0.3\n")
+    p = P.load(f)
+    assert p.band == 0.05 and p.fixed["reversion"] == 0.3 and p.fixed["fill_tie"] == 0.8
+    f.write_text("prior_bnad = 0.05\n")
+    with pytest.raises(ValueError, match="unknown parameters"):
+        P.load(f)
