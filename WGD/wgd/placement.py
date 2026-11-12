@@ -543,7 +543,8 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
             res = fill_ploidy(tree, props, targets, fixed, sc)
             if params.prior_enabled and fracs_all.get(t):
                 new_targets, moves = Q.majority_prior(targets, fracs_all[t], params.band,
-                                                      params.prior_min_clear_fraction)
+                                                      params.prior_min_clear_fraction,
+                                                      params.prior_borderline_majority)
                 if moves:
                     res_prior = fill_ploidy(tree, props, new_targets, fixed, sc)
                     applied = not params.prior_require_simpler or _complexity(res_prior) < _complexity(res)
@@ -689,10 +690,10 @@ def _solution(fixed: dict[str, int], f: Fill) -> str:
 
 
 def _prior_text(p: dict | None) -> str | None:
-    """e.g. `applied:FR1 0>1 (0.010)` or `not_simpler:...` (strict targets kept)."""
+    """e.g. `applied:FR1 0>1 (0.010; clear majority)` or `not_simpler:...` (strict targets kept)."""
     if not p:
         return None
-    moves = ",".join(f"{region_label(s)} {o}>{n} ({d:.3f})" for s, (o, n, d) in p["moves"].items())
+    moves = ",".join(f"{region_label(s)} {o}>{n} ({d:.3f}; {k} majority)" for s, (o, n, d, k) in p["moves"].items())
     return f"{'applied' if p['applied'] else 'not_simpler'}:{moves}"
 
 
@@ -741,7 +742,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             # or as flips that undo the prior
             targets = prior["targets"]
             fracs = {s: f for s, f in fracs.items() if s not in prior["moves"]}
-            for s, (o, n, d) in prior["moves"].items():
+            for s, (o, n, d, _) in prior["moves"].items():
                 up = n > o
                 factors.append(("prior_raised" if up else "prior_lowered",
                                 Q.prior_factor(d, params.band, params.prior_raised_factor if up
@@ -754,6 +755,14 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             factors = list(worst.values())
 
         margins = Q.ploidy_margins(targets, fracs)
+        # borderline-majority prior: the other samples at that boundary are borderline too; their
+        # uncertainty is borderline_ploidy, so flipping them is not counted again as ambiguity
+        flip_margins = dict(margins)
+        if prior:
+            bj = {max(o, n) for o, n, _, k in prior["moves"].values() if k == "borderline"}
+            flip_margins = {s: m for s, m in margins.items()
+                            if not any(fracs[s][j - 1] is not None and abs(fracs[s][j - 1] - 0.5) < params.band
+                                       for j in bj)}
         if margins:
             s_min = min(margins, key=margins.get)
             factors.append(("borderline_ploidy", Q.graded(margins[s_min], Q.PLOIDY_MARGIN),
@@ -828,7 +837,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                         return v
 
                     base = solve(targets)
-                    alts = [solve(tg) for tg in Q.flips(targets, fracs, margins)] if fracs else []
+                    alts = [solve(tg) for tg in Q.flips(targets, fracs, flip_margins)] if fracs else []
                     alts += [solve(targets, m) for m in params.ambiguity_majorities]
                     diff = []
                     for a in alts:
@@ -841,6 +850,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                         amb_detail = f"alt:{txt}"
                         factors.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], amb_detail))
         # per-event score: the factors that belong to one GD (its clone, samples, support)
+        nth: dict[str, int] = {}
         for e in te:
             c = e["placed_clone"]
             if e["placed_as"] == "superseded_by_fill" or tree is None or c not in tree.parent:
@@ -848,7 +858,12 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                 continue
             ef: list[tuple[str, float, str]] = []
             ev_samples = [sample_key(x) for x in (e.get("samples") or "").split(",") if x] or list(targets)
-            m = {x: margins[x] for x in ev_samples if x in margins}
+            # borderline_ploidy at this GD's own level (2026-11-12, LTX0693: two clear clonal GDs and a
+            # borderline third): GDs above its clone + its rank on the clone (fixed GDs first, then fill)
+            nth[c] = nth.get(c, 0) + 1
+            level = sum(gds.get(a, 0) for a in tree.ancestors(c)) + nth[c]
+            m = {x: abs(fracs[x][level - 1] - 0.5) for x in ev_samples
+                 if level <= 3 and x in fracs and fracs[x][level - 1] is not None}
             if m:
                 s_min = min(m, key=m.get)
                 ef.append(("borderline_ploidy", Q.graded(m[s_min], Q.PLOIDY_MARGIN), f"{m[s_min]:.3f}:{region_label(s_min)}"))

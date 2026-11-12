@@ -107,36 +107,54 @@ def flips(targets: dict[str, int], fracs: dict[str, tuple[float, float, float]],
 
 
 def majority_prior(targets: dict[str, int], fracs: dict[str, tuple[float, float, float]],
-                   band: float, min_clear_fraction: float) -> tuple[dict[str, int], dict[str, tuple[int, int, float]]]:
-    """Majority ploidy prior (Piotr, 2026-11-12, LTX0981-Tumour1).
+                   band: float, min_clear_fraction: float, borderline_majority: bool = True
+                   ) -> tuple[dict[str, int], dict[str, tuple[int, int, float, str]]]:
+    """Majority ploidy prior, one GD level (boundary) at a time (Piotr, 2026-11-12).
 
-    Samples are *clear* when their margin (`ploidy_margins`) is >= PLOIDY_MARGIN. If more than
-    `min_clear_fraction` of all samples are clear at the same level k, a borderline sample one
-    level off k (its deciding fraction less than `band` from 0.5) is moved to k: raised when
-    the majority is doubled more (clonal-GD prior), lowered when it is doubled less (diploid
-    prior when k = 0). Returns (new targets, {sample: (old, new, distance from 0.5)}).
+    At boundary j (>= j GDs, genome fraction f[j-1] vs 0.5) a sample is *clear* when its
+    fraction is at least PLOIDY_MARGIN from 0.5 and *borderline* when it is less than `band`
+    from it. Moves are only between levels j-1 and j:
+      clear majority (LTX0981): more than `min_clear_fraction` of all samples are clearly on
+          one side; borderline samples on the other side join it.
+      borderline majority (LTX0693, `borderline_majority`): no sample is clear at this
+          boundary, every sample is borderline, and more than `min_clear_fraction` of them
+          are on one side; the rest join it.
+    Raising follows a doubled majority (clonal-GD prior); lowering follows an undoubled one
+    (diploid prior when j = 1). Returns (new targets, {sample: (old, new, distance from 0.5,
+    "clear" | "borderline")}).
     """
-    margins = ploidy_margins(targets, fracs)
-    clear = [targets[s] for s, m in margins.items() if m >= PLOIDY_MARGIN]
-    if not clear:
-        return dict(targets), {}
-    k = max(set(clear), key=lambda v: (clear.count(v), -v))
-    if clear.count(k) <= min_clear_fraction * len(targets):
-        return dict(targets), {}
-    moves = {}
-    for s, n in targets.items():
-        f = fracs.get(s)
-        if f is None or margins.get(s, 0.0) >= PLOIDY_MARGIN:
+    new = dict(targets)
+    moves: dict[str, tuple[int, int, float, str]] = {}
+    n = len(targets)
+    for j in (1, 2, 3):
+        x = {s: fracs[s][j - 1] - 0.5 for s in targets
+             if fracs.get(s) is not None and fracs[s][j - 1] is not None}
+        if not x:
             continue
-        if n == k - 1 and f[k - 1] is not None:      # fraction for >= k GDs, just below 0.5
-            d = 0.5 - f[k - 1]
-        elif n == k + 1 and n <= 3 and f[n - 1] is not None:  # fraction for >= n GDs, just above 0.5
-            d = f[n - 1] - 0.5
+        up = [s for s, v in x.items() if v >= PLOIDY_MARGIN]
+        down = [s for s, v in x.items() if v <= -PLOIDY_MARGIN]
+        border_up = [s for s, v in x.items() if 0 <= v < band]
+        border_down = [s for s, v in x.items() if -band < v < 0]
+        if len(up) > min_clear_fraction * n:
+            side, kind = "up", "clear"
+        elif len(down) > min_clear_fraction * n:
+            side, kind = "down", "clear"
+        elif (borderline_majority and not up and not down and len(border_up) + len(border_down) == n
+              and n > 0):
+            if len(border_up) > min_clear_fraction * n:
+                side, kind = "up", "borderline"
+            elif len(border_down) > min_clear_fraction * n:
+                side, kind = "down", "borderline"
+            else:
+                continue
         else:
             continue
-        if 0 <= d < band:
-            moves[s] = (n, k, float(d))
-    return {**targets, **{s: m[1] for s, m in moves.items()}}, moves
+        for s in (border_down if side == "up" else border_up):
+            frm, to = (j - 1, j) if side == "up" else (j, j - 1)
+            if new[s] == frm:
+                new[s] = to
+                moves[s] = (targets[s] if s not in moves else moves[s][0], to, float(abs(x[s])), kind)
+    return new, moves
 
 
 def prior_factor(d: float, band: float, lo_hi: tuple[float, float]) -> float:

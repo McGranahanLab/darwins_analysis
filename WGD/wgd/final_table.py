@@ -33,6 +33,7 @@ unique `wgd_event_id` (tumour:clone:k), its source, PGDD event, quality and fact
 from __future__ import annotations
 
 import json
+import re
 from itertools import combinations
 
 import polars as pl
@@ -218,12 +219,11 @@ def modifications(tumours: pl.DataFrame, events: pl.DataFrame, table: pl.DataFra
         if pp:
             status, moves = pp.split(":", 1)
             for m in moves.split(","):
-                reg, o_n, d = m.split(" ")
-                o, n = (int(x) for x in o_n.split(">"))
+                reg, o, n, d, rule = re.fullmatch(r"(\S+) (\d)>(\d) \(([\d.]+); (\w+) majority\)", m).groups()
                 kind = ("ploidy_prior_not_simpler" if status == "not_simpler"
                         else "ploidy_prior_raised" if n > o else "ploidy_prior_lowered")
                 rows.append({"tumour_id": t, "modification": kind, "samples": reg,
-                             "detail": f"num_gds {o}>{n}, fraction {d.strip('()')} from 0.5",
+                             "detail": f"num_gds {o}>{n}, fraction {d} from 0.5, {rule} majority",
                              "solution_strict": r.get("solution_strict"),
                              "solution_final": final.get(t), **base})
     for e in events.iter_rows(named=True):

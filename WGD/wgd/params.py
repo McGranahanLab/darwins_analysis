@@ -44,6 +44,7 @@ class Params:
     prior_band: float | None = None        # a sample is borderline within this distance of 0.5 (None: ploidy_margin)
     prior_min_clear_fraction: float = 0.5  # samples clearly at the shared level must be > this fraction of all samples
     prior_require_simpler: bool = True     # use the prior only if it gives a simpler fill than the strict targets
+    prior_borderline_majority: bool = True  # also when every sample is borderline at a level and most are on one side
     # factor = lo at the edge of the band, hi just next to 0.5
     prior_raised_factor: tuple[float, float] = (0.6, 0.85)   # clonal-GD prior: raised to the doubled majority
     prior_lowered_factor: tuple[float, float] = (0.75, 0.95)  # diploid prior is stronger: lowered to the majority

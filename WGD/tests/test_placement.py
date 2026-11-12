@@ -243,6 +243,8 @@ def test_quality_borderline_and_ambiguous():
               rt=ratios(c2=2.0))
     t = res.tumours.row(0, named=True)
     assert placed(res)[-1] == "fill_clone2"
+    # borderline majority would raise R3 -> clone1, also one GD: not simpler, strict answer kept
+    assert t["ploidy_prior"] == "not_simpler:R3 0>1 (0.010; borderline majority)"
     assert t["quality_code"].startswith("borderline_ploidy(0.010:R")
     # R1 down -> clone5 (R2 only); R2 down -> clone4 (R1 only); R3 up -> one clonal GD
     assert "ambiguous_solution(alt:clone5=1|clone4=1|clone1=1)" in t["quality_code"]
@@ -602,7 +604,7 @@ def test_ltx0981_clonal_prior_raises_borderline_sample():
     res, tb, gds = ltx0981(0.49)
     t = res.tumours.row(0, named=True)
     assert gds == {"clone1": 1} and t["status"] == "resolved"
-    assert t["ploidy_prior"] == "applied:FR1 0>1 (0.010)"
+    assert t["ploidy_prior"] == "applied:FR1 0>1 (0.010; clear majority)"
     assert t["quality_code"] == "prior_raised(FR1:0.010)"           # no borderline_ploidy / ambiguous_solution
     assert t["quality"] == pytest.approx(0.85 - 0.25 * 0.1, abs=1e-3)
     assert tb["sub_class"].unique().to_list() == [None]             # the GD on the MRCA is clonal
@@ -625,10 +627,13 @@ def test_prior_needs_clear_majority_and_band():
     assert ltx0981(0.38)[0].tumours["ploidy_prior"].item() is None
     # a narrower band (tunable) also leaves 0.45 alone
     assert ltx0981(0.45, params=P.Params(prior_band=0.04))[0].tumours["ploidy_prior"].item() is None
-    # LTX0535-like: every sample borderline, no clear majority -> no prior
-    tg, moves = Q.majority_prior({"a": 1, "b": 1, "c": 0}, {"a": (0.51, 0.1, 0), "b": (0.53, 0.1, 0),
-                                                            "c": (0.49, 0.1, 0)}, 0.1, 0.5)
-    assert moves == {}
+    # LTX0535-like: every sample borderline, 2 of 3 above -> borderline majority proposes raising c
+    # (whether it is used depends on the fill: see test_quality_borderline_and_ambiguous) ...
+    fr = {"a": (0.51, 0.1, 0), "b": (0.53, 0.1, 0), "c": (0.49, 0.1, 0)}
+    assert Q.majority_prior({"a": 1, "b": 1, "c": 0}, fr, 0.1, 0.5)[1] == {"c": (0, 1, pytest.approx(0.01), "borderline")}
+    # ... unless that rule is off, or a sample at that level is clear on the other side
+    assert Q.majority_prior({"a": 1, "b": 1, "c": 0}, fr, 0.1, 0.5, borderline_majority=False)[1] == {}
+    assert Q.majority_prior({"a": 1, "b": 1, "c": 0, "d": 0}, fr | {"d": (0.2, 0.0, 0)}, 0.1, 0.5)[1] == {}
     # 2 of 4 clear is not a majority
     tg, moves = Q.majority_prior({"a": 1, "b": 1, "c": 0, "d": 0}, {"a": (0.9, 0.1, 0), "b": (0.9, 0.1, 0),
                                                                     "c": (0.49, 0.1, 0), "d": (0.45, 0.1, 0)}, 0.1, 0.5)
@@ -643,7 +648,7 @@ def test_prior_second_gd_levels():
     # majority at 1, one sample just over the second-GD line -> lowered to 1
     tg, moves = Q.majority_prior({"a": 1, "b": 1, "c": 2}, {"a": (0.95, 0.1, 0), "b": (0.95, 0.2, 0),
                                                             "c": (0.95, 0.53, 0)}, 0.1, 0.5)
-    assert tg == {"a": 1, "b": 1, "c": 1} and moves["c"] == (2, 1, pytest.approx(0.03))
+    assert tg == {"a": 1, "b": 1, "c": 1} and moves["c"] == (2, 1, pytest.approx(0.03), "clear")
 
 
 def test_diploid_prior_lowers_borderline_sample():
@@ -652,7 +657,7 @@ def test_diploid_prior_lowers_borderline_sample():
     summ = summary_df(T, {"R1": (0.52, 0.05, 0.0), "R2": (0.1, 0.0, 0.0), "R3": (0.15, 0.0, 0.0)})
     res = run(events((False, False, None, ["R1"])), ploidy_rule="fill", regions=reg, summary=summ, rt=ratios(c4=2.0))
     t = res.tumours.row(0, named=True)
-    assert t["ploidy_prior"] == "applied:R1 1>0 (0.020)"
+    assert t["ploidy_prior"] == "applied:R1 1>0 (0.020; clear majority)"
     assert not [p for p in placed(res) if p and p.startswith("fill_")]
     assert t["quality_code"] == "prior_lowered(R1:0.020)"
     assert t["quality"] == pytest.approx(0.95 - 0.2 * 0.2, abs=1e-3)
@@ -671,7 +676,7 @@ def test_prior_skipped_when_not_simpler():
               rt=ratios(c2=2.0))
     t = res.tumours.row(0, named=True)
     # strict: clone2 (1 GD); prior: clone1 (1 GD, raises all three) -> same complexity -> strict kept
-    assert t["ploidy_prior"] == "not_simpler:R3 0>1 (0.030)"
+    assert t["ploidy_prior"] == "not_simpler:R3 0>1 (0.030; clear majority)"
     assert placed(res)[-1] == "fill_clone2"
     # forcing it (prior_require_simpler = false) uses the prior
     res = run(events((False, False, None, ["R1", "R2"])), ploidy_rule="fill", regions=reg, summary=summ,
@@ -697,7 +702,7 @@ def test_modifications_are_listed_for_review():
     res, tb, _ = ltx0981(0.49)
     t = res.tumours.row(0, named=True)
     assert t["solution_strict"] == "clone3=1*,clone4=1,clone5=1" and t["solution_prior"] == "clone1=1"
-    assert tb["ploidy_prior"].unique().to_list() == ["applied:FR1 0>1 (0.010)"]
+    assert tb["ploidy_prior"].unique().to_list() == ["applied:FR1 0>1 (0.010; clear majority)"]
     m = final_table.modifications(res.tumours, res.events, tb).to_dicts()
     assert [(r["modification"], r["samples"], r["solution_strict"], r["solution_final"]) for r in m] == [
         ("ploidy_prior_raised", "FR1", "clone3=1*,clone4=1,clone5=1", "clone1=1")]
@@ -708,3 +713,47 @@ def test_modifications_are_listed_for_review():
     # a clear tumour has none
     res, tb, _ = ltx0981(0.9)
     assert final_table.modifications(res.tumours, res.events, tb).is_empty()
+
+
+LTX0693_FRACS = {  # pgdd_cohort_gd_summary (templates/pgdd.zip): genome_frac_nMaj2/3/4
+    "FLN01": (0.99994, 0.92742, 0.46717), "LN01": (1.0, 0.97272, 0.51358), "R1": (1.0, 0.89857, 0.50227),
+    "R2": (0.99991, 0.98765, 0.50158), "R3": (1.0, 0.96304, 0.50173), "R4": (0.99921, 0.92463, 0.48872)}
+
+
+def ltx0693(**kw):
+    """Real PGDD (Piotr, 2026-11-12): GD1, GD2 clonal; GD3 ploidy-only in LN01, R1, R2, R3, all
+    four just above 0.5 for a third GD, FLN01 and R4 just below. Stand-in tree (the real
+    cp_table is not in yet) where LN01+R1 (clone4) and R2+R3 (clone3) share no subclone."""
+    cp = {"LN01": "clone4", "R1": "clone4", "FLN01": "clone5", "R4": "clone5", "R2": "clone3", "R3": "clone3"}
+    cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": float(cp[s] == c)}
+                         for s in cp for c in PARENT])
+    fr = LTX0693_FRACS
+    reg = regions_df(T, {s: 2 + int(f[2] > 0.5) for s, f in fr.items()})
+    tu = tumour("Clonal", 1, n_second=1, n_clonal=2)
+    ev = events((True, False, None, list(fr)), (True, False, None, list(fr)),
+                (False, False, None, ["LN01", "R1", "R2", "R3"]))
+    rt = ratios(c1=2.0)
+    res = placement.place_events(ev, tu, mut_counts(), rt, cpdf, ploidy_rule="fill", regions=reg,
+                                 summary=summary_df(T, fr), **kw)
+    tb = final_table.build_table(res.events, res.tumours, tu, rt)
+    return res, tb, {c: v for c, v in zip(tb["clone"], tb["number_of_gds_at_clone"]) if v}
+
+
+def test_ltx0693_borderline_majority_third_clonal_gd():
+    res, tb, gds = ltx0693()
+    t = res.tumours.row(0, named=True)
+    assert gds == {"clone1": 3} and t["status"] == "resolved"
+    assert t["solution_strict"] == "clone1=2,clone3=1,clone4=1"
+    assert t["ploidy_prior"] == ("applied:FLN01 2>3 (0.033; borderline majority),"
+                                 "R4 2>3 (0.011; borderline majority)")
+    q = {r["wgd_event_id"]: r for r in final_table.build_events(res.events, res.tumours, tumour("Clonal", 1, 1, 2),
+                                                                ratios(c1=2.0)).iter_rows(named=True)}
+    # first two clonal GDs: clear at their own level; the third: borderline + prior
+    assert q[f"{T}:clone1:1"]["event_quality"] == 1.0 and q[f"{T}:clone1:2"]["event_quality"] == 1.0
+    third = q[f"{T}:clone1:3"]
+    assert third["event_quality_code"] == "borderline_ploidy(0.002:R2);prior_raised(FLN01:0.033)"
+    assert third["event_quality"] == pytest.approx((0.5 + 0.5 * 0.00158 / 0.1) * (0.85 - 0.25 * 0.0328 / 0.1), abs=2e-3)
+    assert t["quality"] == third["event_quality"]       # no ambiguity charged for the other borderline samples
+    assert tb["sub_class"].unique().to_list() == [None]
+    # strict (prior off): two clonal + two subclonal GDs
+    assert ltx0693(params=P.Params(prior_enabled=False))[2] == {"clone1": 2, "clone3": 1, "clone4": 1}

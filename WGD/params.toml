@@ -20,6 +20,8 @@ ambiguity_majorities = [0.4, 0.6]  # ambiguous_solution: other majority cut-offs
 prior_enabled = true
 # prior_band = 0.10          # borderline = within this of 0.5; unset = ploidy_margin
 prior_min_clear_fraction = 0.5
+prior_borderline_majority = true  # also when every sample is borderline at a level and most (> prior_min_clear_fraction)
+                                  # are on one side (LTX0693)
 prior_require_simpler = true # use the prior only if the fill gets simpler (fewer missing, forced, then added GDs)
 prior_raised_factor = [0.6, 0.85]   # quality factor: [edge of band, next to 0.5]
 prior_lowered_factor = [0.75, 0.95] # diploid prior is stronger, so a smaller penalty
