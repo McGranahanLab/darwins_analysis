@@ -71,3 +71,22 @@ def test_snapshot(tumour):
     if os.environ.get("UPDATE_CASES") or not f.exists():
         f.write_text(json.dumps(got, indent=1, sort_keys=True) + "\n")
     assert got == json.loads(f.read_text())
+
+
+def test_ltx0272_gd_on_clone5_fails_as_reversion_to_diploid():
+    """Piotr, 2026-11-12: reversion to diploid is impossible. GD1 forced onto clone5 (cluster 5
+    alone) doubles clone12, 11, 10, 6, 8, which all sit in SU_T1.R2 (num_gds 0): failed, quality 0."""
+    import polars as pl
+    d = CASES / "LTX0272-Tumour1"
+    t, ratios, cp = read_case(d / "cp_table.csv", d / "ratio_scores.csv")
+    tb = pgdd_tables(d / "pgdd", t)
+    tb["events"] = tb["events"].with_columns(
+        pl.when(pl.col("GD_event") == "GD1").then(pl.lit("5")).otherwise(pl.col("clusters")).alias("clusters"))
+    r = replay(tb, ratios, cp, PARAMS)
+    row = r["tumours"].row(0, named=True)
+    assert r["gds"] == "clone2=1,clone5=1"
+    assert row["status"] == "failed" and row["quality"] == 0.0
+    assert "reversion_to_diploid(clone12,clone11,clone8,clone10,clone6:R2(0<1))" in row["quality_code"]
+    ev = {e["clone"]: e for e in r["wgd_events"].iter_rows(named=True)}
+    assert ev["clone5"]["event_quality"] == 0.0 and ev["clone2"]["event_quality"] > 0
+    assert r["modified_tumours"]["modification"].to_list() == ["failed_reversion_to_diploid"]

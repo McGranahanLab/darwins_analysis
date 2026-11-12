@@ -762,3 +762,16 @@ def test_ltx0693_borderline_majority_third_clonal_gd():
     assert tb["sub_class"].unique().to_list() == [None]
     # strict (prior off): two clonal + two subclonal GDs
     assert ltx0693(params=P.Params(prior_enabled=False))[2] == {"clone1": 2, "clone3": 1, "clone4": 1}
+
+
+def test_sample_reversions():
+    """A doubled clone whose cells are mostly in a less-doubled sample; minority cells don't count."""
+    tree = placement.Tree.from_ratios(ratios())
+    props = {"R1": {"clone4": 1.0}, "R2": {"clone5": 0.7, "clone3": 0.3}, "R3": {"clone3": 0.8, "clone5": 0.2}}
+    rev = placement.sample_reversions(tree, props, {"R1": 1, "R2": 1, "R3": 0}, {"clone2": 1}, 0.5)
+    assert rev == []                                         # clone5: 0.7 in R2 (1 GD) vs 0.2 in R3 (0)
+    rev = placement.sample_reversions(tree, props, {"R1": 1, "R2": 0, "R3": 0}, {"clone2": 1}, 0.5)
+    assert [(x["clone"], x["charged_to"], x["samples"]) for x in rev] == [("clone5", "clone2", {"R2": 0, "R3": 0})]
+    # 2 GDs on the path, sample at 1: reversion to lower ploidy
+    rev = placement.sample_reversions(tree, {"R1": {"clone4": 1.0}}, {"R1": 1}, {"clone1": 1, "clone2": 1}, 0.5)
+    assert [(x["clone"], x["gds"]) for x in rev] == [("clone4", 2)]

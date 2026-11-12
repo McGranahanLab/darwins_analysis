@@ -13,6 +13,8 @@ alpaca_threshold = 1.5       # alpaca_disagrees full credit at this max(ratio_A,
 alpaca_mut_floor = 0.9       # alpaca_disagrees lowest value for a mutation-supported GD with >= min_support doubled
                              # mutations (0.5 without mutations, linear in between); LTX1348
 majority_coverage = 0.5      # minority_coverage: 0.2 at 0, 0.5 at this coverage
+reversion_min_share = 0.5    # a clone with k GDs on its path reverts when > this share of its cells is in samples
+                             # PGDD calls with < k GDs (LTX0272); fails the tumour
 ambiguity_majorities = [0.4, 0.6]  # ambiguous_solution: other majority cut-offs tried
 
 # ---- majority ploidy prior (Piotr, 2026-11-12, LTX0981-Tumour1) ----
@@ -36,3 +38,4 @@ unplaced_events = 0.5
 multicluster_parent_child = 0.7
 fill_tie = 0.8
 fill_count_differs = 0.9
+reversion_to_diploid = 0.0   # also reversion_to_lower_ploidy; the tumour's status becomes `failed`

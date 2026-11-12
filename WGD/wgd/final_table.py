@@ -208,6 +208,8 @@ def modifications(tumours: pl.DataFrame, events: pl.DataFrame, table: pl.DataFra
       ploidy_prior_raised / ploidy_prior_lowered   a borderline sample's PGDD num_gds was moved
       ploidy_prior_not_simpler                     the prior was considered but not used
       forced_gd                                    a relaxed-pass GD (minority_coverage)
+      failed_reversion_to_diploid / _lower_ploidy  a doubled clone sits mostly in samples with fewer
+                                                   GDs (quality 0, status failed)
     `solution_strict` / `solution_final`: GDs per clone without / with the change (* = forced)."""
     final = {}
     for (t,), g in table.group_by("tumour_id"):
@@ -226,6 +228,12 @@ def modifications(tumours: pl.DataFrame, events: pl.DataFrame, table: pl.DataFra
                              "detail": f"num_gds {o}>{n}, fraction {d} from 0.5, {rule} majority",
                              "solution_strict": r.get("solution_strict"),
                              "solution_final": final.get(t), **base})
+        code = r.get("quality_code") or ""
+        for kind in ("reversion_to_diploid", "reversion_to_lower_ploidy"):
+            m = re.search(kind + r"\(([^)]*\))*[^)]*\)", code)
+            if m:
+                rows.append({"tumour_id": t, "modification": f"failed_{kind}", "samples": None,
+                             "detail": m.group(0), "solution_strict": None, "solution_final": final.get(t), **base})
     for e in events.iter_rows(named=True):
         for fl in (e.get("flags") or "").split(";"):
             if fl.startswith("minority_coverage("):

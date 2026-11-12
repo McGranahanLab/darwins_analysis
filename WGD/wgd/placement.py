@@ -614,8 +614,9 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                 e["flags"].append("reversion")
 
     # quality (wgd.quality): per tumour, product of evidence factors
+    failed: dict[str, list[dict]] = {}   # tumour -> sample_reversions (status `failed`, quality 0)
     qual = _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpaca_cn,
-                           tumours, h_mismatch, fill_info, ploidy_rule, prior_info, params)
+                           tumours, h_mismatch, fill_info, ploidy_rule, prior_info, params, failed)
 
     # per-tumour status (notebook queue files): no_gd / clonal_gd_only resolved,
     # alpaca_called resolved iff every event's ratio > 1.5, mut_supported unresolved
@@ -634,6 +635,8 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
             status = "resolved" if ok else "unresolved"
         else:
             status = "unresolved"
+        if t in failed:
+            status = "failed"
         f = fill_info.get(t)
         rows.append({"tumour_id": t, "triage": cls, "status": status, "has_alpaca_tree": t in trees,
                      "n_events": len(te),
@@ -677,9 +680,45 @@ def _complexity(f: Fill) -> tuple[int, int, int]:
             sum(bool(a.get("relaxed")) for a in f.added), len(f.added))
 
 
+def sample_reversions(tree: Tree, props: dict[str, dict[str, float]], targets: dict[str, int],
+                      gds: dict[str, int], min_share: float) -> list[dict]:
+    """Clones that would have lost a GD (Piotr, 2026-11-12, LTX0272): a clone with k GDs on its
+    root path whose cells sit mostly (> `min_share` of its summed proportion) in samples that
+    PGDD calls with fewer than k GDs. Losing a GD (reverting to diploid) is not possible, so the
+    placement is wrong. Each entry: clone, its GD count, the samples (key -> num_gds) and the
+    GD clone it is charged to (the clone itself or its nearest ancestor carrying a GD)."""
+    out = []
+    for d in tree.parent:
+        path = [d] + tree.ancestors(d)
+        k = sum(gds.get(a, 0) for a in path)
+        cells = {s: p.get(d, 0.0) for s, p in props.items() if p.get(d, 0.0) > 0}
+        total = sum(cells.values())
+        if k == 0 or total == 0:
+            continue
+        low = {s: targets[s] for s in cells if targets.get(s, k) < k}
+        if sum(cells[s] for s in low) / total > min_share:
+            out.append({"clone": d, "gds": k, "samples": low,
+                        "charged_to": next(a for a in path if gds.get(a, 0))})
+    return out
+
+
 def _alpaca_detail(ratio: float, clone: str, support: int | None) -> str:
     """`1.03:clone5`, or `1.03:clone5:mut21` when doubled mutations soften the factor."""
     return f"{ratio:.2f}:{clone}" + (f":mut{support}" if support is not None else "")
+
+
+def _srev_code(srev: list[dict]) -> str:
+    return ("reversion_to_diploid" if all(n == 0 for x in srev for n in x["samples"].values())
+            else "reversion_to_lower_ploidy")
+
+
+def _srev_detail(srev: list[dict]) -> str:
+    """e.g. `clone12,clone11:R2(0<1)`: reverted clones : samples (their num_gds < GDs on the path)."""
+    by = {}
+    for x in srev:
+        key = ",".join(f"{region_label(s)}({n}<{x['gds']})" for s, n in sorted(x["samples"].items()))
+        by.setdefault(key, []).append(x["clone"])
+    return ";".join(f"{','.join(cs)}:{k}" for k, cs in by.items())
 
 
 def _solution(fixed: dict[str, int], f: Fill) -> str:
@@ -718,8 +757,9 @@ def _gd_vector(te: list[dict], cls: str, tree: Tree, num_clonal: int) -> dict[st
 
 def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpaca_cn,
                     tumours, h_mismatch, fill_info, ploidy_rule, prior_info=None,
-                    params: P.Params | None = None) -> dict[str, tuple[float, str | None]]:
+                    params: P.Params | None = None, failed: dict | None = None) -> dict[str, tuple[float, str | None]]:
     params = params or P.Params()
+    failed = {} if failed is None else failed
     prior_info = prior_info or {}
     targets_all: dict[str, dict[str, int]] = {}
     if regions is not None:
@@ -818,6 +858,16 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             if r:
                 fmin, dmin = min(r)
                 factors.append(("alpaca_disagrees", fmin, dmin))
+            # reversion to diploid / lower ploidy from the samples (no clone CN needed): fails the tumour
+            g_cp = cp_by_tumour.get(t)
+            props_all: dict[str, dict[str, float]] = {k: {} for k in targets}
+            for k, c_, v in (g_cp.select("key", "clone", "proportion").iter_rows() if g_cp is not None else []):
+                if k in props_all and v > 0:
+                    props_all[k][c_] = v
+            srev = sample_reversions(tree, props_all, targets, gds, params.reversion_min_share) if targets else []
+            if srev:
+                failed[t] = srev
+                factors.append((_srev_code(srev), Q.FIXED["reversion_to_diploid"], _srev_detail(srev)))
             # reversion: a clone strictly below a doubled clone that looks diploid again
             doubled = set(gds)
             rev = [c for c in tree.parent if any(a in doubled for a in tree.ancestors(c))
@@ -901,6 +951,9 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                                f"{reg}:{d:.3f}"))
             if c in ambiguous_clones:
                 ef.append(("ambiguous_solution", Q.FIXED["ambiguous_solution"], amb_detail))
+            mine_s = [x for x in failed.get(t, []) if x["charged_to"] == c]
+            if mine_s:
+                ef.append((_srev_code(mine_s), Q.FIXED["reversion_to_diploid"], _srev_detail(mine_s)))
             # reversion: charged to the nearest doubled ancestor of the reverted clone
             mine = [x for x in rev if next((a for a in tree.ancestors(x) if a in gds), None) == c]
             if mine:
@@ -914,6 +967,10 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         amb = [x for x in factors if x[0] == "ambiguous_solution"]
         if amb and not any(f[0] == "ambiguous_solution" for e in te for f in e.get("_factors", [])):
             tumour_only.append(list(amb[0]))  # e.g. an alternative adds a GD where there is none
+        for code in ("reversion_to_diploid", "reversion_to_lower_ploidy"):
+            xs = [x for x in factors if x[0] == code]
+            if xs and not any(f[0] == code for e in te for f in e.get("_factors", [])):
+                tumour_only.append(list(xs[0]))
         raised = [x for x in factors if x[0] == "prior_raised"]
         if raised and not any(f[0] == "prior_raised" for e in te for f in e.get("_factors", [])):
             tumour_only.append(list(raised[0]))  # raised sample doubled by a fixed (clonal / mutation) GD

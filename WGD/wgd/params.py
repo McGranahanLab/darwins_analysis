@@ -37,7 +37,9 @@ class Params:
         "multicluster_parent_child": 0.7,
         "fill_tie": 0.8,
         "fill_count_differs": 0.9,
+        "reversion_to_diploid": 0.0,       # also reversion_to_lower_ploidy; status `failed`
     })
+    reversion_min_share: float = 0.5       # a clone reverts when > this share of its cells is in samples with fewer GDs
 
     # majority ploidy prior (Piotr, 2026-11-12, LTX0981-Tumour1): borderline samples are moved
     # to the level most samples clearly share before the fill

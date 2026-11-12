@@ -59,3 +59,8 @@ gds = "clone5=1,clone6=1"
 status = "resolved"
 agreed = "2026-11-12: two parallel mutation-supported GDs (LN clone5, primary clone6); ALPACA puts their shared gain on the absent clone1, so its low clone5 ratio should not weigh much"
 min_quality = 0.8
+
+["LTX0272-Tumour1"]
+gds = "clone2=1,clone4=1"
+status = "resolved"
+agreed = "2026-11-12: GD1 (clusters 5,4) goes on the child clone4; on clone5 it would revert clone12's subtree (all of it in diploid SU_T1.R2) -> failed, quality 0"
