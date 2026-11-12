@@ -44,7 +44,7 @@ CLASS = {"no_gd": "no_wgd", "clonal_gd_only": "clonal_wgd",
          "alpaca_called": "ploidy_only", "mut_supported": "mut_supported"}
 COLUMNS = ("tumour_id", "clone", "parent", "number_of_gds_at_clone", "total_gds_per_tumour",
            "quality", "status", "class", "sub_class", "quality_code", "worst_event_quality", "worst_event_quality_code",
-           "n_unplaced_events", "n_rejected_events")
+           "n_unplaced_events", "n_rejected_events", "ploidy_prior")
 
 
 def sub_class(tree: Tree, subclonal_clones: list[str]) -> str | None:
@@ -187,12 +187,57 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
                 "worst_event_quality": eq.get(clone, (None, None))[0],
                 "worst_event_quality_code": eq.get(clone, (None, None))[1],
                 "n_unplaced_events": unplaced, "n_rejected_events": n_rej,
+                "ploidy_prior": r.get("ploidy_prior"),
             })
     schema = {"tumour_id": pl.Utf8, "clone": pl.Utf8, "parent": pl.Utf8, "number_of_gds_at_clone": pl.Int64,
               "total_gds_per_tumour": pl.Int64, "quality": pl.Float64, "status": pl.Utf8, "class": pl.Utf8,
               "sub_class": pl.Utf8, "quality_code": pl.Utf8, "worst_event_quality": pl.Float64,
-              "worst_event_quality_code": pl.Utf8, "n_unplaced_events": pl.Int64, "n_rejected_events": pl.Int64}
+              "worst_event_quality_code": pl.Utf8, "n_unplaced_events": pl.Int64, "n_rejected_events": pl.Int64,
+              "ploidy_prior": pl.Utf8}
     return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone")
+
+
+MODIFICATION_COLUMNS = ("tumour_id", "modification", "samples", "detail", "solution_strict", "solution_final",
+                        "quality", "quality_code")
+
+
+def modifications(tumours: pl.DataFrame, events: pl.DataFrame, table: pl.DataFrame) -> pl.DataFrame:
+    """Every tumour whose answer departs from the plain rules, one row per departure, for
+    manual validation (Piotr, 2026-11-12):
+      ploidy_prior_raised / ploidy_prior_lowered   a borderline sample's PGDD num_gds was moved
+      ploidy_prior_not_simpler                     the prior was considered but not used
+      forced_gd                                    a relaxed-pass GD (minority_coverage)
+    `solution_strict` / `solution_final`: GDs per clone without / with the change (* = forced)."""
+    final = {}
+    for (t,), g in table.group_by("tumour_id"):
+        final[t] = ",".join(f"{c}={n}" for c, n in sorted(zip(g["clone"], g["number_of_gds_at_clone"])) if n) or "none"
+    rows = []
+    for r in tumours.iter_rows(named=True):
+        t, base = r["tumour_id"], {"quality": r["quality"], "quality_code": r["quality_code"]}
+        pp = r.get("ploidy_prior")
+        if pp:
+            status, moves = pp.split(":", 1)
+            for m in moves.split(","):
+                reg, o_n, d = m.split(" ")
+                o, n = (int(x) for x in o_n.split(">"))
+                kind = ("ploidy_prior_not_simpler" if status == "not_simpler"
+                        else "ploidy_prior_raised" if n > o else "ploidy_prior_lowered")
+                rows.append({"tumour_id": t, "modification": kind, "samples": reg,
+                             "detail": f"num_gds {o}>{n}, fraction {d.strip('()')} from 0.5",
+                             "solution_strict": r.get("solution_strict"),
+                             "solution_final": final.get(t), **base})
+    for e in events.iter_rows(named=True):
+        for fl in (e.get("flags") or "").split(";"):
+            if fl.startswith("minority_coverage("):
+                t = e["tumour_id"]
+                tr = tumours.filter(pl.col("tumour_id") == t).row(0, named=True)
+                rows.append({"tumour_id": t, "modification": "forced_gd",
+                             "samples": ",".join(x.split(":")[0] for x in fl[len("minority_coverage("):-1].split(",")),
+                             "detail": f"{e['placed_clone']}: {fl}", "solution_strict": None,
+                             "solution_final": final.get(t), "quality": tr["quality"],
+                             "quality_code": tr["quality_code"]})
+    schema = {c: pl.Utf8 for c in MODIFICATION_COLUMNS} | {"quality": pl.Float64}
+    return pl.DataFrame(rows, schema=schema).sort("tumour_id", "modification")
 
 
 def rejection_report(event_table: pl.DataFrame, full: pl.DataFrame, filtered: pl.DataFrame,

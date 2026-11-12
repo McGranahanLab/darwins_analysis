@@ -5,6 +5,8 @@ Usage:
 
 Reads `<out>/04_placed/`, `<out>/01_pgdd/pgdd_tumours.parquet` and tx_data
 `alpaca_wgd_ratios`. Writes `<out>/05_table/`:
+  modified_tumours.tsv   one row per departure from the plain rules (ploidy prior, forced GDs),
+                   with the strict and final solutions, for manual review
   wgd_events.tsv   one row per GD (unique wgd_event_id), with quality, factors and `rejected`
   wgd_calls.tsv    one row per ALPACA clone, all GDs
   wgd_calls_rejected_below_<Q>.tsv   with --reject-below Q: GDs with event_quality < Q dropped,
@@ -50,6 +52,12 @@ def main() -> None:
     table.write_csv(out / "wgd_calls.tsv", separator="\t", null_value="NA")
     ev_table.write_csv(out / "wgd_events.tsv", separator="\t", null_value="NA")
     print(f"events: {ev_table.height}")
+    mods = final_table.modifications(tumours, events, table)
+    mods.write_csv(out / "modified_tumours.tsv", separator="\t", null_value="NA")
+    print(f"modified tumours (prior / forced GDs, for manual review): {mods['tumour_id'].n_unique()} "
+          f"-> {out / 'modified_tumours.tsv'}")
+    if mods.height:
+        print(mods.group_by("modification").len().sort("modification"))
     if args.reject_below is not None:
         filt = final_table.build_table(events, tumours, pgdd_t, ratios, reject_below=args.reject_below,
                                        event_table=ev_table)

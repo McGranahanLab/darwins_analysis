@@ -690,3 +690,21 @@ def test_params_toml_matches_defaults(tmp_path):
     f.write_text("prior_bnad = 0.05\n")
     with pytest.raises(ValueError, match="unknown parameters"):
         P.load(f)
+
+
+def test_modifications_are_listed_for_review():
+    """Piotr, 2026-11-12: every tumour changed by the prior or a forced GD is findable post hoc."""
+    res, tb, _ = ltx0981(0.49)
+    t = res.tumours.row(0, named=True)
+    assert t["solution_strict"] == "clone3=1*,clone4=1,clone5=1" and t["solution_prior"] == "clone1=1"
+    assert tb["ploidy_prior"].unique().to_list() == ["applied:FR1 0>1 (0.010)"]
+    m = final_table.modifications(res.tumours, res.events, tb).to_dicts()
+    assert [(r["modification"], r["samples"], r["solution_strict"], r["solution_final"]) for r in m] == [
+        ("ploidy_prior_raised", "FR1", "clone3=1*,clone4=1,clone5=1", "clone1=1")]
+    # strict run: the forced GD on clone3 is listed instead
+    res, tb, _ = ltx0981(0.49, params=P.Params(prior_enabled=False))
+    m = final_table.modifications(res.tumours, res.events, tb).to_dicts()
+    assert [(r["modification"], r["samples"]) for r in m] == [("forced_gd", "R2")]
+    # a clear tumour has none
+    res, tb, _ = ltx0981(0.9)
+    assert final_table.modifications(res.tumours, res.events, tb).is_empty()

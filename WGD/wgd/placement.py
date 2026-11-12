@@ -547,7 +547,8 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                 if moves:
                     res_prior = fill_ploidy(tree, props, new_targets, fixed, sc)
                     applied = not params.prior_require_simpler or _complexity(res_prior) < _complexity(res)
-                    prior_info[t] = {"applied": applied, "moves": moves, "targets": new_targets}
+                    prior_info[t] = {"applied": applied, "moves": moves, "targets": new_targets,
+                                     "strict": _solution(fixed, res), "prior": _solution(fixed, res_prior)}
                     if applied:
                         res = res_prior
             fill_info[t] = res
@@ -645,7 +646,9 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                      "H_tree_path_max_gds": h_mismatch.get(t, (None, None))[1],
                      "quality": qual.get(t, (None, None, None))[0], "quality_code": qual.get(t, (None, None, None))[1],
                      "tumour_factors": qual.get(t, (None, None, None))[2],
-                     "ploidy_prior": _prior_text(prior_info.get(t))})
+                     "ploidy_prior": _prior_text(prior_info.get(t)),
+                     "solution_strict": (prior_info.get(t) or {}).get("strict"),
+                     "solution_prior": (prior_info.get(t) or {}).get("prior")})
 
     ev_df = pl.DataFrame([{**{k: v for k, v in e.items() if k != "flags"}, "flags": ";".join(e["flags"]) or None}
                           for e in ev], infer_schema_length=None)
@@ -653,7 +656,7 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                      "n_events": pl.Int64, "n_unplaced": pl.Int64, "fill": pl.Utf8, "H_mismatch": pl.Boolean,
                      "H_summary_max_gds": pl.Int64, "H_tree_path_max_gds": pl.Int64,
                      "quality": pl.Float64, "quality_code": pl.Utf8, "tumour_factors": pl.Utf8,
-                     "ploidy_prior": pl.Utf8}
+                     "ploidy_prior": pl.Utf8, "solution_strict": pl.Utf8, "solution_prior": pl.Utf8}
     return Placement(ev_df, pl.DataFrame(rows, schema=tumour_schema).sort("tumour_id"), log)
 
 
@@ -671,6 +674,18 @@ def _complexity(f: Fill) -> tuple[int, int, int]:
     """Smaller is simpler: (GDs still missing or in excess, forced relaxed-pass GDs, GDs added)."""
     return (sum(f.remaining.values()) + sum(f.over.values()),
             sum(bool(a.get("relaxed")) for a in f.added), len(f.added))
+
+
+def _solution(fixed: dict[str, int], f: Fill) -> str:
+    """GDs per clone after a fill, e.g. `clone3=1,clone4=1,clone5=1*` (* = forced), `none`."""
+    gds = dict(fixed)
+    forced = set()
+    for a in f.added:
+        gds[a["clone"]] = gds.get(a["clone"], 0) + 1
+        if a.get("relaxed"):
+            forced.add(a["clone"])
+    txt = ",".join(f"{c}={n}{'*' if c in forced else ''}" for c, n in sorted(gds.items()) if n) or "none"
+    return txt + ("" if not f.remaining and not f.over else " (incomplete)")
 
 
 def _prior_text(p: dict | None) -> str | None:

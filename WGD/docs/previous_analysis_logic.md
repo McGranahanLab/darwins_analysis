@@ -284,11 +284,12 @@ This runs before the fill (`Q.majority_prior`, needs the step 03 summary). Sampl
 - **Score:** `prior_raised` runs from 0.6 at the edge of the band to 0.85 next to 0.5. `prior_lowered` runs from 0.75 to 0.95 and is tumour-only, because no GD carries it. Moved samples are left out of `borderline_ploidy` and `ambiguous_solution` (flips back to the strict targets), and `fill_count_differs` is not charged, so the uncertainty counts once. The ordering is: all samples clear (1.0) > prior (0.6–0.95) > strict multi-GD solution.
 - A fill GD on the MRCA counts as clonal for `sub_class`.
 - All values are in `params.toml` (`--params`). The ALPACA check on the root clone is not required (Piotr, 2026-11-12).
+- **Post hoc** (Piotr, 2026-11-12: changes must be findable for manual validation): `tumours_placed.tsv` → `ploidy_prior`, `solution_strict`, `solution_prior`; fill events carry the flag `prior_raised(...)`; `wgd_calls.tsv` → `ploidy_prior`; `05_table/modified_tumours.tsv` lists each prior move and each forced GD with the strict and final solutions.
 
 **LTX0981-T1** (`templates/cp_table.csv`, `ratio_scores.csv`, b9a0443): R1–R3 have `genome_frac_nMaj2` ≈ 0.96, FR1 has 0.49, and FR1 = clone1 0.30 + clone7 0.42 + clone10 0.28.
 - **Strict** (FR1 = 0): clone1 and clone2 would double FR1, so the fill takes clone5 (R1), clone4 (R3) and a forced clone3 for R2 (23%). That's 3 GDs, quality 0.056.
 - **With the prior** (FR1 raised): one GD on clone1 (ALPACA ratio_A 1.87), quality 0.825 (`prior_raised(FR1:0.010)`). With FR1 at 0.9: clone1, quality 1.0.
-- The PGDD event used in the test (one ploidy-only GD in R1–R3) is assumed. The real PGDD output for LTX0981 isn't in the mock.
+- Real PGDD (`templates/pgdd.zip`, `pixi run replay_case`): one ploidy-only GD1 in R1–R3, FR1 `genome_frac_nMaj2` 0.4929 (ploidy 2.2; R1–R3 0.96–0.98, ploidy 3.2–3.4). Strict: clone3* + clone4 + clone5, quality 0.054. Prior: clone1, quality 0.833.
 
 ## 5b. ALPACA ratio threshold: concerns (Darwin, 2026-11-09; revisit later, 1.5 in use)
 
