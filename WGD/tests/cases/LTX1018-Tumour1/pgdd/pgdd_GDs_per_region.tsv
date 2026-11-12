@@ -1,0 +1,4 @@
+sample_id	tumour_id	gd_clusters	num_gds	gd_events	First_GD	Second_GD
+LTX1018_SU_FLN01..13bd45dchwly	LTX1018-Tumour1	3	2	GD1,GD2	GD1	GD2
+LTX1018_SU_T1.R1..18d0dd49h5fm	LTX1018-Tumour1	""	1	GD1	GD1	No GD
+LTX1018_SU_T1.R2..ec2789cdh5cv	LTX1018-Tumour1	3	3	GD1,GD2,GD3	GD1	GD2

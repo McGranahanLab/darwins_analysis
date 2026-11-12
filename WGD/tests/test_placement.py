@@ -235,8 +235,9 @@ def summary_df(t: str, fr: dict[str, tuple]) -> pl.DataFrame:
 
 
 def test_quality_borderline_and_ambiguous():
-    """LTX0535-like (Piotr, 2026-11-10): genome fractions all near 0.5. R1, R2 just above
-    (one subclonal GD on clone2); R3 at 0.49. Flipping R3 gives a clonal GD instead."""
+    """Synthetic, 3 samples (first modelled on LTX0535, which is not like this: 8 samples, R4 and
+    R5 below; see tests/cases once its files are in). Genome fractions all near 0.5. R1, R2 just
+    above (one subclonal GD on clone2); R3 at 0.49. Flipping R3 gives a clonal GD instead."""
     reg = regions_df(T, {"R1": 1, "R2": 1, "R3": 0})
     summ = summary_df(T, {"R1": (0.51, 0.1, 0.03), "R2": (0.53, 0.1, 0.03), "R3": (0.49, 0.1, 0.03)})
     res = run(events((False, False, None, ["R1", "R2"])), ploidy_rule="fill", regions=reg, summary=summ,
@@ -627,7 +628,7 @@ def test_prior_needs_clear_majority_and_band():
     assert ltx0981(0.38)[0].tumours["ploidy_prior"].item() is None
     # a narrower band (tunable) also leaves 0.45 alone
     assert ltx0981(0.45, params=P.Params(prior_band=0.04))[0].tumours["ploidy_prior"].item() is None
-    # LTX0535-like: every sample borderline, 2 of 3 above -> borderline majority proposes raising c
+    # every sample borderline, 2 of 3 above -> borderline majority proposes raising c
     # (whether it is used depends on the fill: see test_quality_borderline_and_ambiguous) ...
     fr = {"a": (0.51, 0.1, 0), "b": (0.53, 0.1, 0), "c": (0.49, 0.1, 0)}
     assert Q.majority_prior({"a": 1, "b": 1, "c": 0}, fr, 0.1, 0.5)[1] == {"c": (0, 1, pytest.approx(0.01), "borderline")}
@@ -721,9 +722,9 @@ LTX0693_FRACS = {  # pgdd_cohort_gd_summary (templates/pgdd.zip): genome_frac_nM
 
 
 def ltx0693(**kw):
-    """Real PGDD (Piotr, 2026-11-12): GD1, GD2 clonal; GD3 ploidy-only in LN01, R1, R2, R3, all
-    four just above 0.5 for a third GD, FLN01 and R4 just below. Stand-in tree (the real
-    cp_table is not in yet) where LN01+R1 (clone4) and R2+R3 (clone3) share no subclone."""
+    """Real PGDD fractions (Piotr, 2026-11-12): GD1, GD2 clonal; GD3 ploidy-only in LN01, R1, R2, R3,
+    all four just above 0.5 for a third GD, FLN01 and R4 just below. Stand-in tree where LN01+R1
+    (clone4) and R2+R3 (clone3) share no subclone; the real tree is in tests/cases."""
     cp = {"LN01": "clone4", "R1": "clone4", "FLN01": "clone5", "R4": "clone5", "R2": "clone3", "R3": "clone3"}
     cpdf = pl.DataFrame([{"tumour_id": T, "clone": c, "sample_id": sample(s), "proportion": float(cp[s] == c)}
                          for s in cp for c in PARENT])

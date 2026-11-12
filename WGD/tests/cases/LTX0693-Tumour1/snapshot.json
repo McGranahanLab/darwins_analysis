@@ -1,0 +1,35 @@
+{
+ "events": {
+  "LTX0693-Tumour1:clone1:1": [
+   "clonal",
+   1.0,
+   null
+  ],
+  "LTX0693-Tumour1:clone1:2": [
+   "clonal",
+   1.0,
+   null
+  ],
+  "LTX0693-Tumour1:clone1:3": [
+   "fill",
+   0.39,
+   "borderline_ploidy(0.002:R2);prior_raised(FLN01:0.033)"
+  ]
+ },
+ "gds": "clone1=3",
+ "modifications": [
+  [
+   "ploidy_prior_raised",
+   "FLN01"
+  ],
+  [
+   "ploidy_prior_raised",
+   "R4"
+  ]
+ ],
+ "ploidy_prior": "applied:FLN01 2>3 (0.033; borderline majority),R4 2>3 (0.011; borderline majority)",
+ "quality": 0.39,
+ "quality_code": "borderline_ploidy(0.002:R2);prior_raised(FLN01:0.033)",
+ "solution_strict": "clone1=2,clone2=1*,clone3=1,clone5=1* (incomplete)",
+ "status": "resolved"
+}

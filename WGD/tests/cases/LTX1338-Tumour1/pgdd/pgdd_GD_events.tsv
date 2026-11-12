@@ -1,0 +1,3 @@
+GD_event	GD_event_id	tumour_id	is_clonal	num_regions_gd_event	total_regions	is_subclonal_mutation_supported	clusters	samples
+GD1	LTX1338-Tumour1_GD1	LTX1338-Tumour1	FALSE	2	4	TRUE	2	LTX1338_SU_T1.R1..2b9a393dhmwh,LTX1338_SU_T1.R2..31ba6954hmwh
+GD2	LTX1338-Tumour1_GD2	LTX1338-Tumour1	FALSE	2	4	FALSE		LTX1338_SU_T1.R3..d588d2b4hmwh,LTX1338_SU_T1.R4..1578435bhmwh

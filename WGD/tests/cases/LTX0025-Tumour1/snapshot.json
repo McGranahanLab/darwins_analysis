@@ -1,0 +1,26 @@
+{
+ "events": {
+  "LTX0025-Tumour1:clone1:1": [
+   "clonal",
+   1.0,
+   null
+  ],
+  "LTX0025-Tumour1:clone3:1": [
+   "fill",
+   0.5,
+   "ambiguous_solution(alt:clone1=1,clone2=1,clone3=1)"
+  ],
+  "LTX0025-Tumour1:clone3:2": [
+   "fill",
+   0.5,
+   "ambiguous_solution(alt:clone1=1,clone2=1,clone3=1)"
+  ]
+ },
+ "gds": "clone1=1,clone3=2",
+ "modifications": [],
+ "ploidy_prior": null,
+ "quality": 0.339,
+ "quality_code": "ambiguous_solution(alt:clone1=1,clone2=1,clone3=1);borderline_ploidy(0.036:R2)",
+ "solution_strict": null,
+ "status": "resolved"
+}

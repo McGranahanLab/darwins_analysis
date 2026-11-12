@@ -49,6 +49,8 @@ pixi run final_table --tx-data-dir <tx_data>/data --out output/<name> [--reject-
 pixi run compare_tables --old <previous table> --out output/<name>
 pixi run replay_case     # one edge case: templates/pgdd.zip + cp_table.csv + ratio_scores.csv -> output/cases/<tumour>/,
                          # answer with and without the ploidy prior
+pixi run test     # includes tests/test_cases.py: every real tumour discussed with Piotr, replayed from tests/cases/<tumour>/
+                  # (agreed answers in tests/cases/agreed.toml must hold; snapshots: UPDATE_CASES=1 after review)
 pixi run test     # needs tx_data with PR #5 next to darwins_analysis, or TX_DATA_REPO
 WGD_RSCRIPT="micromamba run -n pgdd Rscript" pixi run test   # also compares 00/03 with the R scripts
 ```

@@ -1,0 +1,48 @@
+# Answers agreed with Piotr for real tumours (doc §5 walk-throughs). GDs per clone after
+# steps 04-05, from the files in tests/cases/<tumour>/ (cp_table and ratio_scores as Piotr sent
+# them, PGDD rows frozen from templates/pgdd.zip). A rule change that breaks one of these is a
+# clash to discuss with Piotr before merging (2026-11-12), not a test to update.
+
+["LTX0025-Tumour1"]
+gds = "clone1=1,clone3=2"
+status = "resolved"
+agreed = "2026-11-09: clonal GD + clone3 twice (old rule gave clone3 + clone2, fixed by hand)"
+
+["LTX0073-Tumour1"]
+gds = "clone1=1,clone14=1,clone3=1,clone7=2"
+status = "resolved"
+agreed = "2026-11-09: Piotr's answer"
+
+["LTX0501-Tumour1"]
+gds = "clone4=1,clone5=1,clone6=1"
+status = "resolved"
+agreed = "2026-11-10: the old hand-curated answer (clone6, not clone9)"
+
+["LTX1338-Tumour1"]
+gds = "clone2=1,clone9=1"
+status = "resolved"
+agreed = "2026-11-10: GD as high as the data allow (clone9, not clone15)"
+
+["LTX1055-Tumour1"]
+gds = "clone3=1,clone4=1"
+status = "resolved"
+agreed = "2026-11-11: relaxed pass, clone3 forced, heavy penalty"
+max_quality = 0.45
+
+["LTX1018-Tumour1"]
+gds = "clone1=1,clone2=1,clone3=1"
+status = "resolved"
+agreed = "2026-11-11: third GD forced onto clone2, heavy penalty"
+max_quality = 0.45
+
+["LTX0981-Tumour1"]
+gds = "clone1=1"
+status = "resolved"
+agreed = "2026-11-12: clonal-GD prior raises FR1 (0.49)"
+ploidy_prior = "applied"
+
+["LTX0693-Tumour1"]
+gds = "clone1=3"
+status = "resolved"
+agreed = "2026-11-12: three clonal GDs, the third with lower confidence"
+ploidy_prior = "applied"

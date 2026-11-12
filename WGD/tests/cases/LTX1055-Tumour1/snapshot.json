@@ -1,0 +1,26 @@
+{
+ "events": {
+  "LTX1055-Tumour1:clone3:1": [
+   "fill_forced",
+   0.392,
+   "minority_coverage(0.32:R1)"
+  ],
+  "LTX1055-Tumour1:clone4:1": [
+   "mutation",
+   1.0,
+   null
+  ]
+ },
+ "gds": "clone3=1,clone4=1",
+ "modifications": [
+  [
+   "forced_gd",
+   "R1"
+  ]
+ ],
+ "ploidy_prior": null,
+ "quality": 0.392,
+ "quality_code": "minority_coverage(0.32:R1)",
+ "solution_strict": null,
+ "status": "resolved"
+}

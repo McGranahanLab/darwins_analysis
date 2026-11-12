@@ -1,0 +1,21 @@
+{
+ "events": {
+  "LTX0981-Tumour1:clone1:1": [
+   "fill",
+   0.833,
+   "prior_raised(FR1:0.007)"
+  ]
+ },
+ "gds": "clone1=1",
+ "modifications": [
+  [
+   "ploidy_prior_raised",
+   "FR1"
+  ]
+ ],
+ "ploidy_prior": "applied:FR1 0>1 (0.007; clear majority)",
+ "quality": 0.833,
+ "quality_code": "prior_raised(FR1:0.007)",
+ "solution_strict": "clone3=1*,clone4=1,clone5=1",
+ "status": "resolved"
+}

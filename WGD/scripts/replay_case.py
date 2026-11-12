@@ -16,29 +16,13 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import sys
-import tempfile
-import zipfile
 from pathlib import Path
-
-import polars as pl
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from wgd import final_table, pgdd, placement  # noqa: E402
 from wgd import params as P  # noqa: E402
-
-
-def pgdd_tables(src: Path, tumour: str) -> dict[str, pl.DataFrame]:
-    if src.suffix == ".zip":
-        tmp = Path(tempfile.mkdtemp(prefix="pgdd_"))
-        zipfile.ZipFile(src).extractall(tmp)
-        src = next(p.parent for p in tmp.rglob(pgdd.FILES["events"]))
-    t = pgdd.read_pgdd(src)
-    out = {k: (v.filter(pl.col("tumour_id") == tumour) if "tumour_id" in v.columns else v) for k, v in t.items()}
-    summary = pl.read_csv(src / "pgdd_cohort_gd_summary.tsv", separator="\t", null_values=["NA"],
-                          infer_schema_length=None).filter(pl.col("tumour_id") == tumour)
-    return out | {"summary": summary}
+from wgd.replay import pgdd_tables, read_case, replay  # noqa: E402
 
 
 def main() -> None:
@@ -51,11 +35,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=ROOT / "output" / "cases")
     args = ap.parse_args()
 
-    ratios = pl.read_csv(args.ratios)
-    tumour = args.tumour or ratios["tumour_id"].unique().item()
-    ratios = ratios.filter(pl.col("tumour_id") == tumour).select("tumour_id", "clone", "parent", "ratio_A", "ratio_B")
-    cp = (pl.read_csv(args.cp_table).unpivot(index="clone", variable_name="sample_id", value_name="proportion")
-            .with_columns(pl.lit(tumour).alias("tumour_id")))
+    tumour, ratios, cp = read_case(args.cp_table, args.ratios, args.tumour)
     tb = pgdd_tables(args.pgdd, tumour)
     if tb["events"].is_empty() and tb["regions"].is_empty():
         sys.exit(f"{tumour}: not in {args.pgdd}")
@@ -64,20 +44,13 @@ def main() -> None:
     out = args.out / tumour
     out.mkdir(parents=True, exist_ok=True)
     for label, p in (("strict (no prior)", dataclasses.replace(params, prior_enabled=False)), ("final", params)):
-        res = placement.place_events(tb["events"], tb["tumours"], tb["mut_counts"], ratios, cp,
-                                     summary=tb["summary"], ploidy_rule="fill", regions=tb["regions"], params=p)
-        ev = final_table.build_events(res.events, res.tumours, tb["tumours"], ratios)
-        calls = final_table.build_table(res.events, res.tumours, tb["tumours"], ratios, event_table=ev)
-        r = res.tumours.row(0, named=True)
-        gds = ",".join(f"{c}={n}" for c, n in zip(calls["clone"], calls["number_of_gds_at_clone"]) if n) or "none"
-        print(f"{label:18} GDs {gds:30} status {r['status']:10} quality {r['quality']}  {r['quality_code'] or ''}")
-    print(f"ploidy_prior: {r['ploidy_prior']}")
-    res.events.write_csv(out / "events_placed.tsv", separator="\t", null_value="NA")
-    res.tumours.write_csv(out / "tumours_placed.tsv", separator="\t", null_value="NA")
-    ev.write_csv(out / "wgd_events.tsv", separator="\t", null_value="NA")
-    calls.write_csv(out / "wgd_calls.tsv", separator="\t", null_value="NA")
-    final_table.modifications(res.tumours, res.events, calls).write_csv(out / "modified_tumours.tsv",
-                                                                         separator="\t", null_value="NA")
+        r = replay(tb, ratios, cp, p)
+        t = r["tumours"].row(0, named=True)
+        print(f"{label:18} GDs {r['gds']:30} status {t['status']:10} quality {t['quality']}  {t['quality_code'] or ''}")
+    print(f"ploidy_prior: {t['ploidy_prior']}")
+    for k in ("events", "tumours", "wgd_events", "wgd_calls", "modified_tumours"):
+        name = {"events": "events_placed", "tumours": "tumours_placed"}.get(k, k)
+        r[k].write_csv(out / f"{name}.tsv", separator="\t", null_value="NA")
     print(f"wrote {out}")
 
 
