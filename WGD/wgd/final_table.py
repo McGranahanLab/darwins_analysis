@@ -208,6 +208,8 @@ def modifications(tumours: pl.DataFrame, events: pl.DataFrame, table: pl.DataFra
       ploidy_prior_raised / ploidy_prior_lowered   a borderline sample's PGDD num_gds was moved
       ploidy_prior_not_simpler                     the prior was considered but not used
       forced_gd                                    a relaxed-pass GD (minority_coverage)
+      minor_clone_fill                             a GD added by the minor-clone pass
+      alpaca_parent                                ALPACA scored on the absent parent's ratio (parallel GDs)
       failed_reversion_to_diploid / _lower_ploidy  a doubled clone sits mostly in samples with fewer
                                                    GDs (quality 0, status failed)
     `solution_strict` / `solution_final`: GDs per clone without / with the change (* = forced)."""
@@ -236,6 +238,13 @@ def modifications(tumours: pl.DataFrame, events: pl.DataFrame, table: pl.DataFra
                              "detail": m.group(0), "solution_strict": None, "solution_final": final.get(t), **base})
     for e in events.iter_rows(named=True):
         for fl in (e.get("flags") or "").split(";"):
+            if fl.startswith(("minor_clone_fill(", "alpaca_parent(")):
+                t = e["tumour_id"]
+                tr = tumours.filter(pl.col("tumour_id") == t).row(0, named=True)
+                rows.append({"tumour_id": t, "modification": fl.split("(")[0], "samples": None,
+                             "detail": f"{e['placed_clone']}: {fl}", "solution_strict": None,
+                             "solution_final": final.get(t), "quality": tr["quality"],
+                             "quality_code": tr["quality_code"]})
             if fl.startswith("minority_coverage("):
                 t = e["tumour_id"]
                 tr = tumours.filter(pl.col("tumour_id") == t).row(0, named=True)

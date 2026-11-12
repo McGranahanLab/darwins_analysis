@@ -2,25 +2,38 @@
  "events": {
   "LTX0501-Tumour1:clone4:1": [
    "mutation",
-   0.951,
-   "alpaca_disagrees(1.26:clone4:mut12)"
+   1.0,
+   null
   ],
   "LTX0501-Tumour1:clone5:1": [
    "fill",
-   0.511,
-   "alpaca_disagrees(1.01:clone5)"
+   1.0,
+   null
   ],
   "LTX0501-Tumour1:clone6:1": [
    "fill",
-   0.53,
-   "alpaca_disagrees(1.03:clone6)"
+   1.0,
+   null
   ]
  },
  "gds": "clone4=1,clone5=1,clone6=1",
- "modifications": [],
+ "modifications": [
+  [
+   "alpaca_parent",
+   null
+  ],
+  [
+   "alpaca_parent",
+   null
+  ],
+  [
+   "alpaca_parent",
+   null
+  ]
+ ],
  "ploidy_prior": null,
- "quality": 0.46,
- "quality_code": "alpaca_disagrees(1.01:clone5);fill_count_differs(2 vs 1)",
+ "quality": 0.9,
+ "quality_code": "fill_count_differs(2 vs 1)",
  "solution_strict": null,
  "status": "resolved"
 }

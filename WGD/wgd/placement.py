@@ -883,6 +883,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         amb_detail = ""
         rev: list[str] = []
         gds: dict[str, int] = {}
+        eff: dict[str, float] = {}
         if tree is not None:
             gds = _gd_vector(te, cls, tree, int(num_clonal.get(t) or 0))
             # mutation support per clone (largest count of its mutation-supported GDs)
@@ -890,8 +891,20 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
             for e in te:
                 if e.get("is_subclonal_mutation_supported") and e.get("supporting_mut_count") is not None:
                     mut_sup[e["placed_clone"]] = max(mut_sup.get(e["placed_clone"], 0), e["supporting_mut_count"])
-            r = [(Q.alpaca_factor(maxab[(t, c)], mut_sup.get(c)), _alpaca_detail(maxab[(t, c)], c, mut_sup.get(c)))
-                 for c in gds if maxab.get((t, c)) is not None]
+            # parallel GDs whose shared gain ALPACA moved onto their absent parent (LTX0552-T2): use its ratio
+            g_cp0 = cp_by_tumour.get(t)
+            present = set(g_cp0.filter(pl.col("proportion") > 0)["clone"]) if g_cp0 is not None else set()
+            eff = {c: maxab[(t, c)] for c in gds if maxab.get((t, c)) is not None}
+            for c in list(eff):
+                par = tree.parent.get(c)
+                branches = [ch for ch in tree.children(par) if any(gds.get(x) for x in tree.subtree(ch))] if par else []
+                if (par in tree.parent and not gds.get(par) and par not in present and len(branches) >= 2
+                        and (maxab.get((t, par)) or 0) >= Q.ALPACA_THRESHOLD and maxab[(t, par)] > eff[c]):
+                    eff[c] = maxab[(t, par)]
+                    for e in te:
+                        if e["placed_clone"] == c and f"alpaca_parent({par}:{eff[c]:.2f})" not in e["flags"]:
+                            e["flags"].append(f"alpaca_parent({par}:{eff[c]:.2f})")
+            r = [(Q.alpaca_factor(eff[c], mut_sup.get(c)), _alpaca_detail(eff[c], c, mut_sup.get(c))) for c in eff]
             if r:
                 fmin, dmin = min(r)
                 factors.append(("alpaca_disagrees", fmin, dmin))
@@ -967,11 +980,15 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
                 ef.append(("borderline_ploidy", Q.graded(m[s_min], Q.PLOIDY_MARGIN), f"{m[s_min]:.3f}:{region_label(s_min)}"))
             if e.get("is_subclonal_mutation_supported") and e.get("supporting_mut_count") is not None:
                 ef.append(("low_mut_support", Q.graded(e["supporting_mut_count"], Q.MIN_SUPPORT), str(e["supporting_mut_count"])))
-            r = maxab.get((t, c))
+            r = eff.get(c, maxab.get((t, c)))
             if r is not None:
                 sup_e = (e["supporting_mut_count"] if e.get("is_subclonal_mutation_supported") else None)
                 ef.append(("alpaca_disagrees", Q.alpaca_factor(r, sup_e), _alpaca_detail(r, c, sup_e)))
             for fl in e["flags"]:
+                if fl.startswith("minor_clone_fill("):
+                    sh, reg = max((float(x.split(":")[1]), x.split(":")[0])
+                                  for x in fl[len("minor_clone_fill("):-1].split(","))
+                    ef.append(("minor_clone", Q.minor_clone(sh), f"{sh:.2f}:{reg}"))
                 if fl.startswith("minority_coverage("):
                     cov, reg = min((float(x.split(":")[1]), x.split(":")[0])
                                    for x in fl[len("minority_coverage("):-1].split(","))

@@ -101,4 +101,9 @@ def test_ltx0552_minor_clone_pass():
     assert r["gds"] == "clone14=1,clone21=1,clone7=1"
     r = replay(pgdd_tables(d / "pgdd", t), ratios, cp, PARAMS)
     flags = {e["clone"]: e["flags"] for e in r["wgd_events"].iter_rows(named=True)}
-    assert flags["clone20"] == "minor_clone_fill(R3:0.07,R4:0.04,R5:0.12)" and flags["clone14"] is None
+    assert flags["clone20"] == "minor_clone_fill(R3:0.07,R4:0.04,R5:0.12);alpaca_parent(clone1:2.14)"
+    assert flags["clone14"] == "alpaca_parent(clone1:2.14)"
+    q = {e["clone"]: (e["event_quality"], e["event_quality_code"]) for e in r["wgd_events"].iter_rows(named=True)}
+    # minor GDs: 0.6 + 0.3 * share / 0.5 on their largest share; ALPACA judged on clone1 (2.14): no penalty
+    assert q["clone20"] == (pytest.approx(0.6 + 0.3 * 0.12 / 0.5, abs=1e-3), "minor_clone(0.12:R5)")
+    assert q["clone14"] == (1.0, None)

@@ -26,6 +26,10 @@ Deferred work. Decisions and their reasoning are in `docs/previous_analysis_logi
 - [ ] Quality: score the *amount* of doubling, not only the genome fraction past the cut-off (Piotr, 2026-11-12). Today a sample counts as doubled when > 50% of the genome has major CN rounding to >= 2. Rounding is half-to-even (`pgdd_input.compute_num_gds`), so the real cut-off is raw major CN >= 1.5. A sample at major CN 1.6 genome-wide therefore scores the same as one at 2.0, though the second is more believable. Option: a graded factor on the length-weighted mean major CN (or its distance from the level's target) per sample. Step 00 already computes `conf_gd1/2/3` (`_level_confidence`: length-weighted closeness of (A|B) to (2|2), (4|4), (8|8)), but nothing downstream uses it. Check whether it fits (it uses both alleles, so LOH lowers it) or whether a major-allele-only version is better. Calibrate on the cohort.
 - [ ] Open decisions in doc §6: second GDs, triage classes, multi-cluster events with non-adjacent clusters or more than 2 clusters.
 
+## Post-hoc ALPACA correction
+
+- [ ] When our GD calls contradict ALPACA's parsimony, correct ALPACA's clone CN afterwards (Piotr, 2026-11-12). ALPACA doesn't know PGDD: if an absent clone has several doubled children, it moves the shared gain onto that parent (one event instead of parallel GDs). Once we know the parent has no GD, its CN should be roughly halved, and the children's ratios then agree. Cases: LTX1348 (clone1 1.78; clone5 + clone6), LTX0552-T2 (clone1 2.14; six branches), LTX0501 (clone1 1.95; clone4 + clone5 + clone6). Until then, quality uses the parent's ratio for such GDs (`alpaca_parent` flag). This is a separate step after placement, not part of the scoring.
+
 ## Upstream: PGDD
 
 - [ ] PGDD `grepl` substring bug (`R/parrallel_gd_caller.R:412`): cluster 2 also matches 12 (Piotr).

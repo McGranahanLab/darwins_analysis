@@ -13,7 +13,12 @@ Graded factors run from 0.5 (worst) to 1 (at or past the threshold):
                       (0.5 at 1, full credit at >= ALPACA_THRESHOLD). For a mutation-supported
                       GD the worst value rises to ALPACA_MUT_FLOOR (0.9) at >= MIN_SUPPORT doubled
                       mutations (Piotr, 2026-11-12, LTX1348: ALPACA, blind to PGDD, moves parallel
-                      GDs in two clones onto their absent parent by parsimony; mutations win)
+                      GDs in two clones onto their absent parent by parsimony; mutations win).
+                      Parallel GDs under such a parent (no GD on it, absent from every sample,
+                      ALPACA ratio >= ALPACA_THRESHOLD, GDs in >= 2 of its child branches) use the
+                      parent's ratio instead (flag `alpaca_parent(<parent>:<ratio>)`, LTX0552-T2)
+  minor_clone         a GD added by the fill's minor-clone pass, for clones left below their
+                      sample's level (LTX0552-T2): 0.6 for a sliver of cells, 0.9 at >= 50% of a sample
   minority_coverage   heavy: a GD forced onto a clone that covers only part of a doubled
                       sample (relaxed fill pass), because no clone explains it without
                       over-doubling others; 0.2 at 0 coverage, rising to 0.5 at >= 0.5
@@ -175,6 +180,17 @@ def prior_factor(d: float, band: float, lo_hi: tuple[float, float]) -> float:
     """`hi` for a sample right at 0.5, falling linearly to `lo` at the edge of the band."""
     lo, hi = lo_hi
     return hi - (hi - lo) * float(np.clip(d / band, 0.0, 1.0))
+
+
+MINOR_CLONE_FACTOR = (0.6, 0.9)
+
+
+def minor_clone(share: float) -> float:
+    """A GD added only for minor clones (fill minor-clone pass, LTX0552-T2): MINOR_CLONE_FACTOR[0]
+    when it brings almost no cells to target, rising to [1] at MAJORITY_COVERAGE of a sample
+    (largest share over its samples)."""
+    lo, hi = MINOR_CLONE_FACTOR
+    return lo + (hi - lo) * float(np.clip(share / MAJORITY_COVERAGE, 0.0, 1.0))
 
 
 def forced(coverage: float) -> float:

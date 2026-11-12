@@ -30,6 +30,7 @@ class Params:
     alpaca_threshold: float = 1.5          # alpaca_disagrees: full credit at this max(ratio_A, ratio_B)
     alpaca_mut_floor: float = 0.9          # alpaca_disagrees lowest value for a GD with >= min_support doubled mutations
     majority_coverage: float = 0.5         # minority_coverage: 0.2 at 0, 0.5 at this coverage
+    minor_clone_factor: tuple[float, float] = (0.6, 0.9)  # minor_clone: [sliver of cells, >= majority_coverage]
     ambiguity_majorities: tuple[float, ...] = (0.4, 0.6)  # ambiguous_solution: majority cut-offs tried
     fixed: dict[str, float] = field(default_factory=lambda: {
         "ambiguous_solution": 0.5,
@@ -77,7 +78,7 @@ def load(path: Path | None) -> Params:
         if bad:
             raise ValueError(f"{path}: unknown [fixed] factors {bad}")
         raw["fixed"] = {**default_fixed, **raw["fixed"]}
-    for k in ("ambiguity_majorities", "prior_raised_factor", "prior_lowered_factor"):
+    for k in ("ambiguity_majorities", "prior_raised_factor", "prior_lowered_factor", "minor_clone_factor"):
         if k in raw:
             raw[k] = tuple(raw[k])
     return Params(**raw)
@@ -95,4 +96,5 @@ def apply(p: Params) -> None:
     quality.ALPACA_THRESHOLD = p.alpaca_threshold
     quality.ALPACA_MUT_FLOOR = p.alpaca_mut_floor
     quality.MAJORITY_COVERAGE = p.majority_coverage
+    quality.MINOR_CLONE_FACTOR = tuple(p.minor_clone_factor)
     quality.FIXED = dict(p.fixed)
