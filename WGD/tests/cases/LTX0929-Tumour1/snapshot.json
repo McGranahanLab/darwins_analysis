@@ -1,0 +1,67 @@
+{
+ "events": {
+  "LTX0929-Tumour1:clone10:1": [
+   "fill",
+   0.72,
+   "prior_raised(R3:0.052)"
+  ],
+  "LTX0929-Tumour1:clone12:1": [
+   "fill",
+   0.248,
+   "alpaca_disagrees(1.00:clone12);minor_clone(0.15:R3);prior_raised(R3:0.052)"
+  ],
+  "LTX0929-Tumour1:clone12:2": [
+   "fill",
+   0.248,
+   "alpaca_disagrees(1.00:clone12);minor_clone(0.15:R3);prior_raised(R3:0.052)"
+  ],
+  "LTX0929-Tumour1:clone12:3": [
+   "fill",
+   0.248,
+   "alpaca_disagrees(1.00:clone12);minor_clone(0.15:R3);prior_raised(R3:0.052)"
+  ],
+  "LTX0929-Tumour1:clone1:1": [
+   "mutation",
+   0.986,
+   "alpaca_disagrees(1.43:clone1:mut43)"
+  ],
+  "LTX0929-Tumour1:clone1:2": [
+   "fill",
+   0.669,
+   "alpaca_disagrees(1.43:clone1);prior_raised(R3:0.052)"
+  ],
+  "LTX0929-Tumour1:clone3:1": [
+   "mutation_multicluster",
+   0.639,
+   "alpaca_disagrees(1.07:clone3:mut27);multicluster_parent_child"
+  ]
+ },
+ "gds": "clone1=2,clone10=1,clone12=3,clone3=1",
+ "modifications": [
+  [
+   "alpaca_parent",
+   null
+  ],
+  [
+   "minor_clone_fill",
+   null
+  ],
+  [
+   "minor_clone_fill",
+   null
+  ],
+  [
+   "minor_clone_fill",
+   null
+  ],
+  [
+   "ploidy_prior_raised",
+   "R3"
+  ]
+ ],
+ "ploidy_prior": "applied:R3 2>3 (0.052; clear majority)",
+ "quality": 0.174,
+ "quality_code": "alpaca_disagrees(1.00:clone12);multicluster_parent_child;prior_raised(R3:0.052);minor_clone(0.15:R3)",
+ "solution_strict": "clone1=1,clone10=1,clone12=2,clone16=1*,clone18=1,clone3=1 (incomplete)",
+ "status": "resolved"
+}
