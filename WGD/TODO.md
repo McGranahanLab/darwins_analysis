@@ -30,6 +30,10 @@ Deferred work. Decisions and their reasoning are in `docs/previous_analysis_logi
 
 - [ ] When our GD calls contradict ALPACA's parsimony, correct ALPACA's clone CN afterwards (Piotr, 2026-11-12). ALPACA doesn't know PGDD: if an absent clone has several doubled children, it moves the shared gain onto that parent (one event instead of parallel GDs). Once we know the parent has no GD, its CN should be roughly halved, and the children's ratios then agree. Cases: LTX1348 (clone1 1.78; clone5 + clone6), LTX0552-T2 (clone1 2.14; six branches), LTX0501 (clone1 1.95; clone4 + clone5 + clone6). Until then, quality uses the parent's ratio for such GDs (`alpaca_parent` flag). This is a separate step after placement, not part of the scoring.
 
+## Micropipeline
+
+- [ ] Wire the modules into one micropipeline (Piotr, 2026-11-13): WGD steps 00–07 → alpaca_post_hoc_correction (darwins_analysis#3) → tx_data build (`alpaca_corrected`, tx_data#8). Every input and output location is a parameter; nothing hardcoded.
+
 ## Upstream: PGDD
 
 - [ ] PGDD `grepl` substring bug (`R/parrallel_gd_caller.R:412`): cluster 2 also matches 12 (Piotr).
