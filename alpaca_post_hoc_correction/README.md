@@ -17,7 +17,10 @@ around it when scoring (`alpaca_parent` flag); this project fixes the copy numbe
 ## Rule
 
 A clone is corrected when it is **absent from every sample**, carries **no GD** in the calls,
-and **at least one child carries a GD**. Clones are processed deepest first, so corrected values
+and a **GD-carrying clone is reached from it through absent, GD-free clones only**: a child with a
+GD, or a chain of missing clones above one (Piotr, 2026-11-13: if clone1 is absent and its child
+clone2 is absent too, and clone2's children doubled in parallel, both clone2 and clone1 are
+corrected, and nothing else; an observed clone stops the chain). Clones are processed deepest first, so corrected values
 feed the next level up. For every segment and allele, the new copy number `x` minimises
 
     sum over children c  |CN_c - 2^g_c * x|   +   |x - CN_parent|
@@ -49,7 +52,15 @@ Outputs (`<out>/`): `alpaca_corrected.parquet` (tx_data `alpaca` schema, derived
 recomputed, plus `pred_CN_A_original`, `pred_CN_B_original`, `corrected`),
 `wgd_ratios_corrected.tsv` (ALPACA's 12 columns), `ratio_comparison.tsv`, `corrections.tsv`
 (one row per corrected clone: children with GDs, bp fraction changed, ratios before/after),
-`skipped.tsv`, `run.json`.
+`skipped.tsv`, `flags.tsv`, `run.json`.
+
+## Flags (not fixed)
+
+Disagreements left after the correction are flagged only (Piotr, 2026-11-13: they should never
+happen): `gd_without_alpaca_doubling` (a clone with a called GD whose ALPACA ratio vs its parent,
+max(A, B), is below 1.5) and `alpaca_reversion` (a clone below a GD-carrying clone whose
+length-weighted median total CN is ≤ 2). On the tx_data mock, with the placeholder `wgd_calls`,
+two clones are flagged; that only shows the mechanics.
 
 ## Status
 
@@ -57,11 +68,10 @@ recomputed, plus `pred_CN_A_original`, `pred_CN_B_original`, `corrected`),
   ALPACA to 1e-9 on all 34 clones.
 - Real cases need the real ALPACA output (tx_data `alpaca` is a mock) and the released WGD calls.
 
-## Open questions
+## Decisions (Piotr, 2026-11-13)
 
-- Should a corrected clone's children be re-inferred too? Today only the absent clone changes;
-  observed clones are kept as ALPACA gave them.
-- Other corrections the WGD calls could drive: a GD-carrying clone whose ALPACA CN shows no
-  doubling (observed, so ALPACA's data and the call disagree: flag, don't fix?), and reversions
-  (ALPACA puts a clone below a GD back at diploid).
-- Write the corrected tables back to tx_data as `alpaca_corrected` / `alpaca_wgd_ratios_corrected`?
+- Only missing clones are corrected (single clones or chains of them); observed clones never, at
+  least until live cases are checked.
+- ALPACA vs call disagreements on observed clones and reversions: flag only.
+- The corrected tables go to tx_data as new sources (`alpaca_corrected`,
+  `alpaca_wgd_ratios_corrected`).

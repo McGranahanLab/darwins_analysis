@@ -90,6 +90,40 @@ def test_nested_absent_ancestors_bottom_up():
     assert got["pred_CN_A"].to_list() == [1] * 4 and got["pred_CN_B"].to_list() == [1] * 4
 
 
+def test_chain_of_missing_clones_both_corrected():
+    """Piotr, 2026-11-13: clone1 absent, its child clone2 absent, clone2's children clone3, clone4
+    doubled in parallel: correct clone2 and clone1 (both missing), nothing else."""
+    parent = {"clone1": "diploid", "clone2": "clone1", "clone3": "clone2", "clone4": "clone2"}
+    cn = {"clone1": [(2, 2)] * 4, "clone2": [(2, 2)] * 4, "clone3": [(2, 2)] * 4, "clone4": [(2, 2)] * 4}
+    res = correct.run(alpaca(cn), props({"clone3": 0.5, "clone4": 0.5}), calls(parent, {"clone3": 1, "clone4": 1}))
+    got = res["alpaca_corrected"].filter(pl.col("corrected"))
+    assert sorted(set(got["clone"])) == ["clone1", "clone2"]
+    for c in ("clone1", "clone2"):
+        g = res["alpaca_corrected"].filter(pl.col("clone") == c)
+        assert g["pred_CN_A"].to_list() == [1] * 4 and g["pred_CN_B"].to_list() == [1] * 4
+    assert res["corrections"]["clone"].to_list() == ["clone2", "clone1"]           # deepest first
+    assert res["flags"].is_empty()
+    # a present clone in the chain stops it: clone1 observed -> only clone2
+    res = correct.run(alpaca(cn), props({"clone1": 0.1, "clone3": 0.5, "clone4": 0.4}),
+                      calls(parent, {"clone3": 1, "clone4": 1}))
+    assert res["corrections"]["clone"].to_list() == ["clone2"]
+
+
+def test_flags_only():
+    # GD called on clone5 but ALPACA (observed) shows no doubling vs clone1, which has cells: flagged, not fixed
+    res = correct.run(alpaca(ALPACA), props({"clone1": 0.1, "clone5": 0.5, "clone6": 0.4}), calls(PARENT, GDS))
+    f = {(r["clone"], r["flag"]) for r in res["flags"].iter_rows(named=True)}
+    assert ("clone5", "gd_without_alpaca_doubling") in f and not res["alpaca_corrected"]["corrected"].any()
+    # reversion: clone2 below doubled clone1 back at 1|1
+    parent = {"clone1": "diploid", "clone2": "clone1"}
+    cn = {"clone1": [(2, 2)] * 4, "clone2": [(1, 1)] * 4}
+    res = correct.run(alpaca(cn), props({"clone1": 0.5, "clone2": 0.5}), calls(parent, {"clone1": 1}))
+    assert [(r["clone"], r["flag"]) for r in res["flags"].iter_rows(named=True)] == [("clone2", "alpaca_reversion")]
+    # after correcting the LTX1348-like case, nothing is left to flag
+    res = correct.run(alpaca(ALPACA), props({"clone5": 0.6, "clone6": 0.4}), calls(PARENT, GDS))
+    assert res["flags"].is_empty()
+
+
 TX = Path(os.environ.get("TX_DATA_REPO", Path(__file__).resolve().parents[3] / "tx_data")) / "data"
 
 

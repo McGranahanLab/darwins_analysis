@@ -9,7 +9,8 @@ and `alpaca_wgd_ratios` (tree). WGD calls: `--wgd-calls` (the WGD pipeline's ste
 wgd_calls.tsv), else tx_data `wgd_calls` (placeholder until the WGD table is released).
 Writes `<out>/`: alpaca_corrected.parquet (tx_data alpaca schema + pred_CN_*_original +
 corrected), wgd_ratios_corrected.tsv (ALPACA's 12-column format), ratio_comparison.tsv,
-corrections.tsv (one row per corrected clone), skipped.tsv, run.json.
+corrections.tsv (one row per corrected clone), skipped.tsv, flags.tsv (ALPACA vs calls
+disagreements left after correction: flagged, not fixed), run.json.
 """
 
 from __future__ import annotations
@@ -46,14 +47,15 @@ def main() -> None:
                       read_any(calls_path), pl.read_parquet(tx / "alpaca_wgd_ratios.parquet"), args.min_quality)
     args.out.mkdir(parents=True, exist_ok=True)
     res["alpaca_corrected"].write_parquet(args.out / "alpaca_corrected.parquet")
-    for k in ("wgd_ratios_corrected", "ratio_comparison", "corrections", "skipped"):
+    for k in ("wgd_ratios_corrected", "ratio_comparison", "corrections", "skipped", "flags"):
         res[k].write_csv(args.out / f"{k}.tsv", separator="\t", null_value="NA")
     cn = res["alpaca_corrected"]
     run = {"wgd_calls": str(calls_path), "min_quality": args.min_quality,
            "tumours": cn["tumour_id"].n_unique(), "tumours_corrected": res["corrections"]["tumour_id"].n_unique()
            if res["corrections"].height else 0,
            "clones_corrected": res["corrections"].height, "rows_changed": int(cn["corrected"].sum()),
-           "skipped": res["skipped"].height}
+           "skipped": res["skipped"].height,
+           "flags": dict(res["flags"].group_by("flag").len().iter_rows()) if res["flags"].height else {}}
     (args.out / "run.json").write_text(json.dumps(run, indent=2) + "\n")
     print(json.dumps(run, indent=2))
     if res["corrections"].height:

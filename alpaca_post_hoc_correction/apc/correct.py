@@ -9,8 +9,9 @@ children look unchanged (~1). Once the WGD pipeline has called the GDs on the ch
 parent's copy number can be re-inferred knowing that it did *not* double.
 
 Rule (one clone at a time, deepest first so corrected values feed the next level up):
-  a clone is corrected when it is absent from every sample, carries no GD in the calls, and at
-  least one child carries a GD. For every segment and allele, its new copy number x minimises
+  a clone is corrected when it is absent from every sample, carries no GD in the calls, and a
+  GD-carrying clone is reached from it through absent GD-free clones only (a child with a GD,
+  or a chain of missing clones above one; Piotr, 2026-11-13). For every segment and allele, its new copy number x minimises
       sum over children c  |CN_c - 2^g_c * x|   +   |x - CN_parent|
   where g_c is the number of GDs on child c (each GD doubles what the child inherits) and
   CN_parent is the parent's copy number (1 for `diploid`). Ties keep ALPACA's value if it is
@@ -46,9 +47,16 @@ def children(parent: dict[str, str], c: str) -> list[str]:
 # ---- the correction ---------------------------------------------------------------------
 
 def clones_to_correct(parent: dict[str, str], gds: dict[str, int], present: set[str]) -> list[str]:
-    """Absent clones without a GD that have at least one child with a GD, deepest first."""
-    out = [c for c in parent if c not in present and not gds.get(c, 0)
-           and any(gds.get(ch, 0) for ch in children(parent, c))]
+    """Absent clones without a GD from which a GD-carrying clone can be reached through absent,
+    GD-free clones only (Piotr, 2026-11-13: a chain of missing clones above the parallel GDs is
+    corrected as a whole; observed clones never). Deepest first."""
+    def missing(c):
+        return c not in present and not gds.get(c, 0)
+
+    def reaches_gd(c):
+        return any(gds.get(ch, 0) or (missing(ch) and reaches_gd(ch)) for ch in children(parent, c))
+
+    out = [c for c in parent if missing(c) and reaches_gd(c)]
     return sorted(out, key=lambda c: (-depth(parent, c), c))
 
 
@@ -142,6 +150,45 @@ def wgd_ratios(cn: pl.DataFrame, parent: dict[str, str]) -> pl.DataFrame:
     return pl.DataFrame(rows)
 
 
+# ---- flags: disagreements left after correction (Piotr, 2026-11-13: should never happen, flag only) --
+
+def flags(cn: pl.DataFrame, ratios: pl.DataFrame, parent: dict[str, str], gds: dict[str, int],
+          threshold: float = 1.5) -> list[dict]:
+    """After correction:
+      gd_without_alpaca_doubling   a clone the calls give a GD has max(ratio_A, ratio_B) < threshold
+                                   vs its parent (ALPACA's CN shows no doubling on that edge);
+      alpaca_reversion             a clone below a GD-carrying clone whose length-weighted median total
+                                   CN is <= 2 (looks diploid again)."""
+    t = cn["tumour_id"][0]
+    out = []
+    for r in ratios.iter_rows(named=True):
+        c, n = r["clone"], gds.get(r["clone"], 0)
+        mx = max(x for x in (r["ratio_A"], r["ratio_B"]) if x is not None) if (
+            r["ratio_A"] is not None or r["ratio_B"] is not None) else None
+        if n and mx is not None and mx < threshold:
+            out.append({"tumour_id": t, "clone": c, "flag": "gd_without_alpaca_doubling",
+                        "detail": f"{n} GD(s) called; max(ratio_A, ratio_B) {mx:.2f} vs {r['parent']}"})
+    doubled = {c for c in parent if gds.get(c, 0)}
+    tot = cn.with_columns((pl.col("pred_CN_A") + pl.col("pred_CN_B")).alias("_t"),
+                          pl.col("segment").map_elements(segment_length, return_dtype=pl.Int64).alias("_l"))
+    for c in parent:
+        anc, p = [], parent.get(c)
+        while p and p != "diploid":
+            anc.append(p)
+            p = parent.get(p)
+        if not doubled & set(anc):
+            continue
+        g = tot.filter(pl.col("clone") == c).sort("_t")
+        if g.is_empty():
+            continue
+        half = g["_l"].sum() / 2
+        med = int(g["_t"][int(np.searchsorted(np.cumsum(g["_l"].to_numpy()), half))])
+        if med <= 2:
+            out.append({"tumour_id": t, "clone": c, "flag": "alpaca_reversion",
+                        "detail": f"below doubled {','.join(a for a in anc if a in doubled)}; median total CN {med}"})
+    return out
+
+
 # ---- cohort driver ---------------------------------------------------------------------------
 
 def run(alpaca: pl.DataFrame, clone_proportions: pl.DataFrame, wgd_calls: pl.DataFrame,
@@ -158,7 +205,7 @@ def run(alpaca: pl.DataFrame, clone_proportions: pl.DataFrame, wgd_calls: pl.Dat
     tree_src = ratios if ratios is not None else wgd_calls
     trees = {t: dict(zip(g["clone"], g["parent"])) for (t,), g in tree_src.group_by("tumour_id")}
     calls = {t: g for (t,), g in wgd_calls.group_by("tumour_id")}
-    out_cn, out_before, out_after, log, skipped = [], [], [], [], []
+    out_cn, out_before, out_after, log, skipped, out_flags = [], [], [], [], [], []
     for (t,), cn in alpaca.group_by("tumour_id", maintain_order=True):
         g = calls.get(t)
         parent = trees.get(t)
@@ -180,6 +227,7 @@ def run(alpaca: pl.DataFrame, clone_proportions: pl.DataFrame, wgd_calls: pl.Dat
         before = wgd_ratios(cn, parent)
         fixed, entries = correct_tumour(cn, parent, gds, pres)
         after = wgd_ratios(fixed, parent)
+        out_flags.extend(flags(fixed, after, parent, gds, threshold))
         out_cn.append(fixed)
         out_before.append(before)
         out_after.append(after)
@@ -206,4 +254,6 @@ def run(alpaca: pl.DataFrame, clone_proportions: pl.DataFrame, wgd_calls: pl.Dat
     return {"alpaca_corrected": pl.concat(out_cn, how="diagonal_relaxed"),
             "wgd_ratios_corrected": ra, "ratio_comparison": comp,
             "corrections": pl.DataFrame(log, infer_schema_length=None),
-            "skipped": pl.DataFrame(skipped, schema={"tumour_id": pl.Utf8, "reason": pl.Utf8})}
+            "skipped": pl.DataFrame(skipped, schema={"tumour_id": pl.Utf8, "reason": pl.Utf8}),
+            "flags": pl.DataFrame(out_flags, schema={"tumour_id": pl.Utf8, "clone": pl.Utf8, "flag": pl.Utf8,
+                                                     "detail": pl.Utf8})}
