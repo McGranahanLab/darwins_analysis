@@ -38,15 +38,18 @@ so the ratios now agree with the GD calls.
 
 ```bash
 pixi install
-pixi run correct --tx-data-dir ../../tx_data/data --out output/mock \
-    [--wgd-calls ../WGD/output/<name>/05_table/wgd_calls.tsv] [--min-quality 0.3]
+pixi run correct --alpaca <tx_data>/data/alpaca.parquet \
+    --clone-proportions <tx_data>/data/clone_proportions.parquet \
+    --tree <tx_data>/data/alpaca_wgd_ratios.parquet \
+    --wgd-calls <WGD output>/05_table/wgd_calls.tsv --out <release dir> [--min-quality 0.3]
 pixi run test       # needs tx_data next to darwins_analysis, or TX_DATA_REPO
 ```
 
-Inputs: tx_data `alpaca`, `clone_proportions`, `alpaca_wgd_ratios` (tree). WGD calls:
-`--wgd-calls` (WGD step 05 `wgd_calls.tsv`), else tx_data `wgd_calls` (still the placeholder).
+Every input and the output location are parameters; nothing is hardcoded (Piotr, 2026-11-13).
+Parquet, TSV or CSV. `--tree` is any table with tumour_id, clone, parent (tx_data
+`alpaca_wgd_ratios`). `--wgd-calls`: the WGD pipeline's step 05 `wgd_calls.tsv`.
 `--min-quality`: only tumours whose call quality reaches it are corrected; the rest are listed
-in `skipped.tsv`.
+in `skipped.tsv`. `run.json` records the inputs.
 
 Outputs (`<out>/`): `alpaca_corrected.parquet` (tx_data `alpaca` schema, derived columns
 recomputed, plus `pred_CN_A_original`, `pred_CN_B_original`, `corrected`),
@@ -76,3 +79,13 @@ two clones are flagged; that only shows the mechanics.
 - The corrected tables go to tx_data as new sources (`alpaca_corrected`,
   `alpaca_wgd_ratios_corrected`): McGranahanLab/tx_data#8 (stacked on #7). Release path proposed:
   `tracerx_842/ALPACA/output/post_hoc_corrected/{alpaca_corrected.parquet,wgd_ratios_corrected.tsv}`.
+
+## TODO
+
+- [ ] Micropipeline wiring the modules together (WGD steps 00–07 → this correction → tx_data build),
+  every location passed as a parameter (Piotr, 2026-11-13).
+- [ ] Realistic mocks (tx_data side): mock ALPACA CN, clone proportions and WGD calls with absent
+  parents above parallel GDs (LTX1348-, LTX0552-T2-like), so the correction and flags are exercised
+  end to end on the mock cohort. Today no mock clone qualifies (Piotr: OK for now, 2026-11-13).
+- [ ] Run on real ALPACA output + released WGD calls; check live cases (LTX1348, LTX0552-T2,
+  LTX0501, LTX0929) before extending the correction beyond missing clones.
