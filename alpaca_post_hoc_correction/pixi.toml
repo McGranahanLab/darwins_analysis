@@ -1,0 +1,17 @@
+[workspace]
+name = "alpaca_post_hoc_correction"
+version = "0.1.0"
+description = "TRACERx: correct ALPACA clone copy number post hoc with the agreed WGD calls"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+
+[dependencies]
+python = "3.11.*"
+polars = ">=1.0"
+pyarrow = ">=15.0"
+numpy = ">=1.26"
+pytest = ">=8.0"
+
+[tasks]
+correct = "python scripts/correct_alpaca.py"
+test    = "pytest tests/ -q"
