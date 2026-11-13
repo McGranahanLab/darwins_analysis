@@ -74,4 +74,5 @@ two clones are flagged; that only shows the mechanics.
   least until live cases are checked.
 - ALPACA vs call disagreements on observed clones and reversions: flag only.
 - The corrected tables go to tx_data as new sources (`alpaca_corrected`,
-  `alpaca_wgd_ratios_corrected`).
+  `alpaca_wgd_ratios_corrected`): McGranahanLab/tx_data#8 (stacked on #7). Release path proposed:
+  `tracerx_842/ALPACA/output/post_hoc_corrected/{alpaca_corrected.parquet,wgd_ratios_corrected.tsv}`.
