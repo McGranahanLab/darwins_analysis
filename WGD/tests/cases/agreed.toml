@@ -1,0 +1,82 @@
+# Answers agreed with Piotr for real tumours (doc §5 walk-throughs). GDs per clone after
+# steps 04-05, from the files in tests/cases/<tumour>/ (cp_table and ratio_scores as Piotr sent
+# them, PGDD rows frozen from templates/pgdd.zip). A rule change that breaks one of these is a
+# clash to discuss with Piotr before merging (2026-11-12), not a test to update.
+
+["LTX0025-Tumour1"]
+gds = "clone1=1,clone3=2"
+status = "resolved"
+agreed = "2026-11-09: clonal GD + clone3 twice (old rule gave clone3 + clone2, fixed by hand)"
+
+["LTX0073-Tumour1"]
+gds = "clone1=1,clone3=1,clone7=2"
+status = "resolved"
+agreed = "2026-11-09: Piotr's answer (clone1, clone3, clone7 x2, clone14); 2026-11-13: borderline search lowers R3 (0.577) to 2, clone14 dropped (Piotr: option 1)"
+
+["LTX0501-Tumour1"]
+gds = "clone4=1,clone5=1,clone6=1"
+status = "resolved"
+agreed = "2026-11-10: the old hand-curated answer (clone6, not clone9)"
+# quality 0.46 -> 0.9 with the ALPACA parent-ratio rule (clone1 absent, 1.95): approved 2026-11-12
+
+["LTX1338-Tumour1"]
+gds = "clone2=1,clone9=1"
+status = "resolved"
+agreed = "2026-11-10: GD as high as the data allow (clone9, not clone15)"
+
+["LTX1055-Tumour1"]
+gds = "clone3=1,clone4=1"
+status = "resolved"
+agreed = "2026-11-11: relaxed pass, clone3 forced, heavy penalty"
+max_quality = 0.45
+
+["LTX1018-Tumour1"]
+gds = "clone1=1,clone3=1"
+status = "resolved"
+agreed = "2026-11-11: third GD forced onto clone2, heavy penalty; 2026-11-13: borderline search lowers R2 (0.545) to 2, forced clone2 GD dropped (Piotr: option 1)"
+
+["LTX0981-Tumour1"]
+gds = "clone1=1"
+status = "resolved"
+agreed = "2026-11-12: clonal-GD prior raises FR1 (0.49)"
+ploidy_prior = "applied"
+
+["LTX0693-Tumour1"]
+gds = "clone1=3"
+status = "resolved"
+agreed = "2026-11-12: three clonal GDs, the third with lower confidence"
+ploidy_prior = "applied"
+
+["LTX0535-Tumour1"]
+gds = "clone1=1"
+status = "resolved"
+agreed = "2026-11-12: clonal, but weaker evidence than LTX0981 (every sample borderline at the first level)"
+ploidy_prior = "applied"
+max_quality = 0.5
+
+["LTX1348-Tumour1"]
+gds = "clone5=1,clone6=1"
+status = "resolved"
+agreed = "2026-11-12: two parallel mutation-supported GDs (LN clone5, primary clone6); ALPACA puts their shared gain on the absent clone1, so its low clone5 ratio should not weigh much"
+min_quality = 0.8
+
+["LTX0272-Tumour1"]
+gds = "clone2=1,clone4=1"
+status = "resolved"
+agreed = "2026-11-12: GD1 (clusters 5,4) goes on the child clone4; on clone5 it would revert clone12's subtree (all of it in diploid SU_T1.R2) -> failed, quality 0"
+
+["LTX0552-Tumour2"]
+gds = "clone10=1,clone14=1,clone20=1,clone21=1,clone22=1,clone7=1"
+status = "resolved"
+agreed = "2026-11-12: every sample doubled, not clonal (doubled mutations in clone7): one GD per branch, minor clones included (clone20, clone10, clone22 via the minor-clone pass)"
+
+["LTX0929-Tumour1"]
+gds = "clone1=2,clone10=1,clone12=3,clone3=1"
+status = "resolved"
+agreed = "2026-11-13: current pipeline output accepted (two parallel first GDs: clone10/clone1 branch for R1-R4, clone3 for R5; R3 raised to 3; minor-clone pass puts 3 GDs on clone12, R3 15%)"
+
+["LTX1020-Tumour1"]
+gds = "clone1=1,clone2=1,clone37=1,clone8=1"
+status = "resolved"
+agreed = "2026-11-13: third GD on clone37 (R6, R7, R8; PGDD GD3 = R6 + R7 kept together), R8 (0.444) raised by the borderline search; clone8 (17% of R8) from the minor-clone pass"
+ploidy_prior = "applied"

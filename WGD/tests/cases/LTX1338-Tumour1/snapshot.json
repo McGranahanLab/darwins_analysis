@@ -1,0 +1,21 @@
+{
+ "events": {
+  "LTX1338-Tumour1:clone2:1": [
+   "mutation",
+   0.914,
+   "alpaca_disagrees(1.07:clone2:mut107)"
+  ],
+  "LTX1338-Tumour1:clone9:1": [
+   "fill",
+   0.551,
+   "alpaca_disagrees(1.05:clone9)"
+  ]
+ },
+ "gds": "clone2=1,clone9=1",
+ "modifications": [],
+ "ploidy_prior": null,
+ "quality": 0.551,
+ "quality_code": "alpaca_disagrees(1.05:clone9)",
+ "solution_strict": null,
+ "status": "resolved"
+}

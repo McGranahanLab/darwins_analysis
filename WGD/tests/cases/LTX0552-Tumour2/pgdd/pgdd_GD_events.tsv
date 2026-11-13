@@ -1,0 +1,3 @@
+GD_event	GD_event_id	tumour_id	is_clonal	num_regions_gd_event	total_regions	is_subclonal_mutation_supported	clusters	samples
+GD1	LTX0552-Tumour2_GD1	LTX0552-Tumour2	FALSE	3	5	FALSE		LTX0552_SU_T2.R3..4bd119cbhm2t,LTX0552_SU_T2.R4..57bea342hm2t,LTX0552_SU_T2.R5..185dfafbhm2t
+GD2	LTX0552-Tumour2_GD2	LTX0552-Tumour2	FALSE	2	5	TRUE	7	LTX0552_SU_T2.R1..e5d3c713hm2t,LTX0552_SU_T2.R2..78325c70hm2t

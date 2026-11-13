@@ -1,0 +1,24 @@
+[workspace]
+name = "WGD"
+version = "0.1.0"
+description = "TRACERx: integrate ALPACA copy number with PGDD whole-genome-doubling calls"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+
+[dependencies]
+python = "3.11.*"
+polars = ">=1.0"
+pyarrow = ">=15.0"
+numpy = ">=1.26"
+pytest = ">=8.0"
+
+[tasks]
+prepare_pgdd_input = "python scripts/00_prepare_pgdd_input.py"
+parse_pgdd = "python scripts/01_parse_pgdd.py"
+prune_tree = "python scripts/02_prune_tree.py"
+generate_summary = "python scripts/03_generate_summary.py"
+place_events = "python scripts/04_place_events.py"
+final_table = "python scripts/05_final_table.py"
+compare_tables = "python scripts/06_compare.py"
+replay_case = "python scripts/replay_case.py"
+test    = "pytest tests/ -q"

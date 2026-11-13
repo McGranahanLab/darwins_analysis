@@ -1,0 +1,2 @@
+GD_event	GD_event_id	tumour_id	is_clonal	num_regions_gd_event	total_regions	is_subclonal_mutation_supported	clusters	samples
+GD1	LTX0981-Tumour1_GD1	LTX0981-Tumour1	FALSE	3	4	FALSE		LTX0981_SU_T1.R1..021c0c46h3lv,LTX0981_SU_T1.R2..cd24277dh3lv,LTX0981_SU_T1.R3..b670dcf0h3lv

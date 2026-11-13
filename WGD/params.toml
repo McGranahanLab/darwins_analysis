@@ -1,0 +1,50 @@
+# Step 04 parameters (wgd/params.py holds the same defaults; tests check they match).
+# Pass another file with `pixi run place_events ... --params <file>`; missing keys keep their default.
+
+# ---- ploidy fill ----
+majority = 0.5               # a clone's subtree carries a sample when > this fraction of it
+min_coverage = 0.1           # relaxed fill pass: smallest share of a sample a clone must cover
+fill_minor_clones = true     # minor-clone pass: also double clones left below their sample's level, if no cell
+                             # ends above its sample's level (LTX0552-T2)
+minor_min_cells = 0.0        # minor-clone pass: a GD must bring more than this share of cells (summed) to target
+alpaca_wgd_threshold = 1.5   # notebook rule only: alpaca_called resolved iff every ratio > this
+
+# ---- quality ----
+ploidy_margin = 0.10         # borderline_ploidy full credit at this distance from 0.5; also "clear" for the prior
+min_support = 10             # low_mut_support full credit
+alpaca_threshold = 1.5       # alpaca_disagrees full credit at this max(ratio_A, ratio_B)
+alpaca_mut_floor = 0.9       # alpaca_disagrees lowest value for a mutation-supported GD with >= min_support doubled
+                             # mutations (0.5 without mutations, linear in between); LTX1348
+majority_coverage = 0.5      # minority_coverage: 0.2 at 0, 0.5 at this coverage
+minor_clone_factor = [0.6, 0.9]  # minor_clone (GD from the minor-clone pass): [sliver of cells, >= majority_coverage]
+reversion_min_share = 0.5    # a clone with k GDs on its path reverts when > this share of its cells is in samples
+                             # PGDD calls with < k GDs (LTX0272); fails the tumour
+ambiguity_majorities = [0.4, 0.6]  # ambiguous_solution: other majority cut-offs tried
+
+# ---- majority ploidy prior (Piotr, 2026-11-12, LTX0981-Tumour1) ----
+# If more than prior_min_clear_fraction of samples are clearly (margin >= ploidy_margin) at the
+# same GD level, borderline samples one level off are moved to it: raised (clonal-GD prior) or
+# lowered (diploid prior).
+prior_enabled = true
+prior_mode = "search"        # search: try moving borderline samples (fewer than prior_max_moved_fraction of them)
+                             # up or down, keep the simplest fill, tie-break: fewest PGDD events split, smallest move
+                             # (LTX1020); "majority": the one-way majority move (prior_min_clear_fraction, ...)
+prior_max_moved_fraction = 0.5
+prior_max_combinations = 2000 # above this many combinations, fall back to the majority rule
+# prior_band = 0.10          # borderline = within this of 0.5; unset = ploidy_margin
+prior_min_clear_fraction = 0.5
+prior_borderline_majority = true  # also when every sample is borderline at a level and most (> prior_min_clear_fraction)
+                                  # are on one side (LTX0693)
+prior_require_simpler = true # use the prior only if the fill gets simpler (fewer missing, forced, then added GDs)
+prior_raised_factor = [0.6, 0.85]   # quality factor: [edge of band, next to 0.5]
+prior_lowered_factor = [0.75, 0.95] # diploid prior is stronger, so a smaller penalty
+
+[fixed]                      # fixed quality factors
+ambiguous_solution = 0.5
+reversion = 0.2
+ploidy_path_mismatch = 0.5
+unplaced_events = 0.5
+multicluster_parent_child = 0.7
+fill_tie = 0.8
+fill_count_differs = 0.9
+reversion_to_diploid = 0.0   # also reversion_to_lower_ploidy; the tumour's status becomes `failed`

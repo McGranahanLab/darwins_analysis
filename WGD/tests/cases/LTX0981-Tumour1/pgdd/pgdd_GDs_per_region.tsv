@@ -1,0 +1,5 @@
+sample_id	tumour_id	gd_clusters	num_gds	gd_events	First_GD	Second_GD
+LTX0981_BR_T1.FR1..fdff5da4hw75	LTX0981-Tumour1	""	0	""	No GD	No GD
+LTX0981_SU_T1.R1..021c0c46h3lv	LTX0981-Tumour1	""	1	GD1	GD1	No GD
+LTX0981_SU_T1.R2..cd24277dh3lv	LTX0981-Tumour1	""	1	GD1	GD1	No GD
+LTX0981_SU_T1.R3..b670dcf0h3lv	LTX0981-Tumour1	""	1	GD1	GD1	No GD

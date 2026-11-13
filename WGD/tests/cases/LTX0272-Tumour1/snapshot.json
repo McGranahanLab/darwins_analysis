@@ -1,0 +1,21 @@
+{
+ "events": {
+  "LTX0272-Tumour1:clone2:1": [
+   "fill",
+   1.0,
+   null
+  ],
+  "LTX0272-Tumour1:clone4:1": [
+   "mutation_multicluster",
+   0.7,
+   "multicluster_parent_child"
+  ]
+ },
+ "gds": "clone2=1,clone4=1",
+ "modifications": [],
+ "ploidy_prior": null,
+ "quality": 0.7,
+ "quality_code": "multicluster_parent_child",
+ "solution_strict": null,
+ "status": "resolved"
+}
