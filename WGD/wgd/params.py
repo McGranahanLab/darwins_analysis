@@ -47,7 +47,7 @@ class Params:
     # majority ploidy prior (Piotr, 2026-11-12, LTX0981-Tumour1): borderline samples are moved
     # to the level most samples clearly share before the fill
     prior_enabled: bool = True
-    prior_mode: str = "majority"            # "search" (2026-11-13, LTX1020) or "majority" (one-way majority move)
+    prior_mode: str = "search"              # "search" (2026-11-13, LTX1020) or "majority" (one-way majority move)
     prior_max_moved_fraction: float = 0.5  # search: move fewer than this fraction of all samples
     prior_max_combinations: int = 2000     # search: above this, fall back to the majority rule
     prior_band: float | None = None        # a sample is borderline within this distance of 0.5 (None: ploidy_margin)

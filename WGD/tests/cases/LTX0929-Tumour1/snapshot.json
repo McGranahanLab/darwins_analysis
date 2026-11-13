@@ -59,7 +59,7 @@
    "R3"
   ]
  ],
- "ploidy_prior": "applied:R3 2>3 (0.052; clear majority)",
+ "ploidy_prior": "applied:R3 2>3 (0.052; search)",
  "quality": 0.174,
  "quality_code": "alpaca_disagrees(1.00:clone12);multicluster_parent_child;prior_raised(R3:0.052);minor_clone(0.15:R3)",
  "solution_strict": "clone1=1,clone10=1,clone12=2,clone16=1*,clone18=1,clone3=1 (incomplete)",

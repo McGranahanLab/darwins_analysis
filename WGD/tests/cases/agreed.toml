@@ -9,9 +9,9 @@ status = "resolved"
 agreed = "2026-11-09: clonal GD + clone3 twice (old rule gave clone3 + clone2, fixed by hand)"
 
 ["LTX0073-Tumour1"]
-gds = "clone1=1,clone14=1,clone3=1,clone7=2"
+gds = "clone1=1,clone3=1,clone7=2"
 status = "resolved"
-agreed = "2026-11-09: Piotr's answer"
+agreed = "2026-11-09: Piotr's answer (clone1, clone3, clone7 x2, clone14); 2026-11-13: borderline search lowers R3 (0.577) to 2, clone14 dropped (Piotr: option 1)"
 
 ["LTX0501-Tumour1"]
 gds = "clone4=1,clone5=1,clone6=1"
@@ -31,10 +31,9 @@ agreed = "2026-11-11: relaxed pass, clone3 forced, heavy penalty"
 max_quality = 0.45
 
 ["LTX1018-Tumour1"]
-gds = "clone1=1,clone2=1,clone3=1"
+gds = "clone1=1,clone3=1"
 status = "resolved"
-agreed = "2026-11-11: third GD forced onto clone2, heavy penalty"
-max_quality = 0.45
+agreed = "2026-11-11: third GD forced onto clone2, heavy penalty; 2026-11-13: borderline search lowers R2 (0.545) to 2, forced clone2 GD dropped (Piotr: option 1)"
 
 ["LTX0981-Tumour1"]
 gds = "clone1=1"
@@ -75,3 +74,9 @@ agreed = "2026-11-12: every sample doubled, not clonal (doubled mutations in clo
 gds = "clone1=2,clone10=1,clone12=3,clone3=1"
 status = "resolved"
 agreed = "2026-11-13: current pipeline output accepted (two parallel first GDs: clone10/clone1 branch for R1-R4, clone3 for R5; R3 raised to 3; minor-clone pass puts 3 GDs on clone12, R3 15%)"
+
+["LTX1020-Tumour1"]
+gds = "clone1=1,clone2=1,clone37=1,clone8=1"
+status = "resolved"
+agreed = "2026-11-13: third GD on clone37 (R6, R7, R8; PGDD GD3 = R6 + R7 kept together), R8 (0.444) raised by the borderline search; clone8 (17% of R8) from the minor-clone pass"
+ploidy_prior = "applied"

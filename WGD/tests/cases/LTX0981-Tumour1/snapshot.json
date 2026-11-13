@@ -13,7 +13,7 @@
    "FR1"
   ]
  ],
- "ploidy_prior": "applied:FR1 0>1 (0.007; clear majority)",
+ "ploidy_prior": "applied:FR1 0>1 (0.007; search)",
  "quality": 0.833,
  "quality_code": "prior_raised(FR1:0.007)",
  "solution_strict": "clone3=1*,clone4=1,clone5=1",

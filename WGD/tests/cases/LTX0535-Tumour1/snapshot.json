@@ -17,7 +17,7 @@
    "R5"
   ]
  ],
- "ploidy_prior": "applied:R4 0>1 (0.077; borderline majority),R5 0>1 (0.005; borderline majority)",
+ "ploidy_prior": "applied:R4 0>1 (0.077; search),R5 0>1 (0.005; search)",
  "quality": 0.351,
  "quality_code": "borderline_ploidy(0.007:R1);prior_raised(R4:0.077)",
  "solution_strict": "clone10=1,clone11=1,clone3=1*,clone6=1*",

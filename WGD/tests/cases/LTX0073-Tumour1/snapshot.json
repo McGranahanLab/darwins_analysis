@@ -1,10 +1,5 @@
 {
  "events": {
-  "LTX0073-Tumour1:clone14:1": [
-   "fill",
-   0.269,
-   "borderline_ploidy(0.077:R3);alpaca_disagrees(1.11:clone14);ambiguous_solution(alt:clone1=1,clone3=1,clone7=2|clone1=1,clone12=1,clone3=1,clone7=2)"
-  ],
   "LTX0073-Tumour1:clone1:1": [
    "clonal",
    1.0,
@@ -26,11 +21,16 @@
    "alpaca_disagrees(1.14:clone7)"
   ]
  },
- "gds": "clone1=1,clone14=1,clone3=1,clone7=2",
- "modifications": [],
- "ploidy_prior": null,
- "quality": 0.199,
- "quality_code": "alpaca_disagrees(1.11:clone14);borderline_ploidy(0.031:R4);ambiguous_solution(alt:clone1=1,clone3=1,clone7=2|clone1=1,clone12=1,clone3=1,clone7=2)",
- "solution_strict": null,
+ "gds": "clone1=1,clone3=1,clone7=2",
+ "modifications": [
+  [
+   "ploidy_prior_lowered",
+   "R3"
+  ]
+ ],
+ "ploidy_prior": "applied:R3 3>2 (0.077; search)",
+ "quality": 0.332,
+ "quality_code": "alpaca_disagrees(1.14:clone7);prior_lowered(R3:0.077);borderline_ploidy(0.031:R4)",
+ "solution_strict": "clone1=1,clone14=1,clone3=1,clone7=2",
  "status": "resolved"
 }

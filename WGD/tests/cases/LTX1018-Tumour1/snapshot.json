@@ -5,27 +5,22 @@
    1.0,
    null
   ],
-  "LTX1018-Tumour1:clone2:1": [
-   "fill_forced",
-   0.079,
-   "borderline_ploidy(0.045:R2);alpaca_disagrees(1.04:clone2);minority_coverage(0.34:R2);ambiguous_solution(alt:clone1=1,clone3=2|clone1=1,clone3=1|clone1=1,clone11=1,clone3=1)"
-  ],
   "LTX1018-Tumour1:clone3:1": [
    "mutation",
-   0.406,
-   "low_mut_support(8);alpaca_disagrees(1.23:clone3:mut8);ambiguous_solution(alt:clone1=1,clone3=2|clone1=1,clone3=1|clone1=1,clone11=1,clone3=1)"
+   0.811,
+   "low_mut_support(8);alpaca_disagrees(1.23:clone3:mut8)"
   ]
  },
- "gds": "clone1=1,clone2=1,clone3=1",
+ "gds": "clone1=1,clone3=1",
  "modifications": [
   [
-   "forced_gd",
+   "ploidy_prior_lowered",
    "R2"
   ]
  ],
- "ploidy_prior": null,
- "quality": 0.067,
- "quality_code": "low_mut_support(8);alpaca_disagrees(1.04:clone2);ambiguous_solution(alt:clone1=1,clone3=2|clone1=1,clone3=1|clone1=1,clone11=1,clone3=1);borderline_ploidy(0.035:FLN01);minority_coverage(0.34:R2)",
- "solution_strict": null,
+ "ploidy_prior": "applied:R2 3>2 (0.045; search)",
+ "quality": 0.472,
+ "quality_code": "low_mut_support(8);alpaca_disagrees(1.23:clone3:mut8);prior_lowered(R2:0.045);borderline_ploidy(0.035:FLN01)",
+ "solution_strict": "clone1=1,clone2=1*,clone3=1",
  "status": "resolved"
 }
