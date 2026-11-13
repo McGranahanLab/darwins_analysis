@@ -26,6 +26,11 @@ ambiguity_majorities = [0.4, 0.6]  # ambiguous_solution: other majority cut-offs
 # same GD level, borderline samples one level off are moved to it: raised (clonal-GD prior) or
 # lowered (diploid prior).
 prior_enabled = true
+prior_mode = "majority"      # search: try moving borderline samples (fewer than prior_max_moved_fraction of them)
+                             # up or down, keep the simplest fill, tie-break: fewest PGDD events split, smallest move
+                             # (LTX1020); "majority": the one-way majority move (prior_min_clear_fraction, ...)
+prior_max_moved_fraction = 0.5
+prior_max_combinations = 2000 # above this many combinations, fall back to the majority rule
 # prior_band = 0.10          # borderline = within this of 0.5; unset = ploidy_margin
 prior_min_clear_fraction = 0.5
 prior_borderline_majority = true  # also when every sample is borderline at a level and most (> prior_min_clear_fraction)

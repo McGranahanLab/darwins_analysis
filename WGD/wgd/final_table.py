@@ -223,11 +223,11 @@ def modifications(tumours: pl.DataFrame, events: pl.DataFrame, table: pl.DataFra
         if pp:
             status, moves = pp.split(":", 1)
             for m in moves.split(","):
-                reg, o, n, d, rule = re.fullmatch(r"(\S+) (\d)>(\d) \(([\d.]+); (\w+) majority\)", m).groups()
+                reg, o, n, d, rule = re.fullmatch(r"(\S+) (\d)>(\d) \(([\d.]+); (\w+)(?: majority)?\)", m).groups()
                 kind = ("ploidy_prior_not_simpler" if status == "not_simpler"
                         else "ploidy_prior_raised" if n > o else "ploidy_prior_lowered")
                 rows.append({"tumour_id": t, "modification": kind, "samples": reg,
-                             "detail": f"num_gds {o}>{n}, fraction {d} from 0.5, {rule} majority",
+                             "detail": f"num_gds {o}>{n}, fraction {d} from 0.5, {rule}",
                              "solution_strict": r.get("solution_strict"),
                              "solution_final": final.get(t), **base})
         code = r.get("quality_code") or ""

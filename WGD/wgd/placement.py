@@ -33,6 +33,7 @@ Deliberate deviations (the notebook would crash or misbehave; see the doc):
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -540,6 +541,11 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
     fill_info: dict[str, Fill | str] = {}
     prior_info: dict[str, dict] = {}   # tumour -> {"applied": bool, "moves": {...}, "targets": {...}}
     fracs_all = _fracs_by_tumour(summary)
+    # PGDD events per sample (pgdd_GDs_per_region.gd_events), for the borderline search's tie-break
+    events_by_sample: dict[str, dict[str, set[str]]] = {}
+    if regions is not None and "gd_events" in regions.columns:
+        for t_, sid, evs in regions.select("tumour_id", "sample_id", "gd_events").iter_rows():
+            events_by_sample.setdefault(t_, {})[sample_key(sid)] = set((evs or "").split(",")) - {""}
     if ploidy_rule == "fill":
         if regions is None:
             raise ValueError("ploidy_rule='fill' needs `regions` (pgdd_GDs_per_region)")
@@ -576,17 +582,24 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                 fixed[c] = fixed.get(c, 0) + 1
             sc = {c: ratio_rows.get((t, c)) for c in tree.parent}
             res = fill_ploidy(tree, props, targets, fixed, sc)
+            new_targets, moves = targets, {}
             if params.prior_enabled and fracs_all.get(t):
-                new_targets, moves = Q.majority_prior(targets, fracs_all[t], params.band,
-                                                      params.prior_min_clear_fraction,
-                                                      params.prior_borderline_majority)
-                if moves:
-                    res_prior = fill_ploidy(tree, props, new_targets, fixed, sc)
-                    applied = not params.prior_require_simpler or _complexity(res_prior) < _complexity(res)
-                    prior_info[t] = {"applied": applied, "moves": moves, "targets": new_targets,
-                                     "strict": _solution(fixed, res), "prior": _solution(fixed, res_prior)}
-                    if applied:
-                        res = res_prior
+                found = (borderline_search(tree, props, targets, fracs_all[t], fixed, sc, params,
+                                           events_by_sample.get(t, {}))
+                         if params.prior_mode == "search" else None)
+                if found is None:   # majority rule, or the search is over its combination limit
+                    if params.prior_mode == "search":
+                        log.append(f"prior {t}: borderline search over the limit, majority rule used")
+                    found = Q.majority_prior(targets, fracs_all[t], params.band, params.prior_min_clear_fraction,
+                                             params.prior_borderline_majority)
+                new_targets, moves = found
+            if moves:
+                res_prior = fill_ploidy(tree, props, new_targets, fixed, sc)
+                applied = not params.prior_require_simpler or _complexity(res_prior)[:3] < _complexity(res)[:3]
+                prior_info[t] = {"applied": applied, "moves": moves, "targets": new_targets,
+                                 "strict": _solution(fixed, res), "prior": _solution(fixed, res_prior)}
+                if applied:
+                    res = res_prior
             fill_info[t] = res
             for e in ploidy_ev:
                 e["placed_as"], e["placement_method"] = "superseded_by_fill", "fill"
@@ -711,10 +724,77 @@ def _fracs_by_tumour(summary: pl.DataFrame | None) -> dict[str, dict[str, tuple]
     return out
 
 
-def _complexity(f: Fill) -> tuple[int, int, int]:
-    """Smaller is simpler: (GDs still missing or in excess, forced relaxed-pass GDs, GDs added)."""
+def borderline_search(tree: Tree, props: dict[str, dict[str, float]], targets: dict[str, int],
+                      fracs: dict[str, tuple], fixed: dict[str, int], score: dict[str, float],
+                      params: P.Params, sample_events: dict[str, set[str]]
+                      ) -> tuple[dict[str, int], dict[str, tuple[int, int, float, str]]] | None:
+    """Ploidy prior as a search (Piotr, 2026-11-13, LTX1020-T1; replaces the one-way majority move).
+
+    Each sample less than `band` from 0.5 at a GD level may move one level across it (up if below,
+    down if above). Every combination moving fewer than `prior_max_moved_fraction` of all samples is
+    filled; the best is the one with
+      (1) the simplest fill (`_complexity`: missing/excess, forced, then majority-fill GDs; the
+          minor-clone GDs only after (3));
+      (2) the fewest PGDD events split: lowering a sample whose PGDD events are all held by a sample
+          that stays at or above its old level (LTX1020: lowering R7 splits GD3 = R6 + R7; raising R8
+          to join them does not);
+      (3) the smallest total distance from 0.5; (4) the fewest moves.
+    Returns (targets, moves) with moves {sample: (old, new, distance, "search")}, or ({...}, {})
+    when nothing moves, or None when there are more than `prior_max_combinations` combinations.
+    """
+    from itertools import combinations, product
+    opts: dict[str, list[tuple[int, float]]] = {}
+    for s_, n in targets.items():
+        f = fracs.get(s_)
+        if f is None:
+            continue
+        o = []
+        for j in (1, 2, 3):
+            if f[j - 1] is None:
+                continue
+            x = f[j - 1] - 0.5
+            if -params.band < x < 0 and n == j - 1:
+                o.append((j, -x))
+            elif 0 <= x < params.band and n == j:
+                o.append((j - 1, x))
+        if o:
+            opts[s_] = o
+    m_max = min(len(opts), max(0, math.ceil(params.prior_max_moved_fraction * len(targets) - 1e-9) - 1))
+    combos = [dict(zip(ss, mv)) for m in range(1, m_max + 1) for ss in combinations(sorted(opts), m)
+              for mv in product(*(opts[x] for x in ss))]
+    if len(combos) > params.prior_max_combinations:
+        return None
+
+    def splits(tg, mv):
+        n_ = 0
+        for x, (new, _) in mv.items():
+            if new < targets[x] and sample_events.get(x) and any(
+                    y != x and sample_events.get(x) <= sample_events.get(y, set()) and tg[y] >= targets[x]
+                    for y in tg):
+                n_ += 1
+        return n_
+
+    best = None
+    for mv in combos:
+        tg = {**targets, **{x: new for x, (new, _) in mv.items()}}
+        cx = _complexity(fill_ploidy(tree, props, tg, fixed, score))
+        key = (cx[:3], splits(tg, mv), round(sum(d for _, d in mv.values()), 9), cx[3], len(mv))
+        if best is None or key < best[0]:
+            best = (key, tg, mv)
+    if best is None:
+        return dict(targets), {}
+    _, tg, mv = best
+    return tg, {x: (targets[x], new, float(d), "search") for x, (new, d) in mv.items()}
+
+
+def _complexity(f: Fill) -> tuple[int, int, int, int]:
+    """Smaller is simpler: (GDs still missing or in excess, forced relaxed-pass GDs, GDs added by the
+    majority fill, GDs added by the minor-clone pass). Minor-clone GDs come last: they follow from
+    the main placement (LTX1020: raising R8 also brings its 17% clone8 up, which must not decide)."""
     return (sum(f.remaining.values()) + sum(f.over.values()),
-            sum(bool(a.get("relaxed")) for a in f.added), len(f.added))
+            sum(bool(a.get("relaxed")) for a in f.added),
+            sum(not a.get("relaxed") and not a.get("minor") for a in f.added),
+            sum(bool(a.get("minor")) for a in f.added))
 
 
 def sample_reversions(tree: Tree, props: dict[str, dict[str, float]], targets: dict[str, int],
@@ -774,7 +854,8 @@ def _prior_text(p: dict | None) -> str | None:
     """e.g. `applied:FR1 0>1 (0.010; clear majority)` or `not_simpler:...` (strict targets kept)."""
     if not p:
         return None
-    moves = ",".join(f"{region_label(s)} {o}>{n} ({d:.3f}; {k} majority)" for s, (o, n, d, k) in p["moves"].items())
+    moves = ",".join(f"{region_label(s)} {o}>{n} ({d:.3f}; {k if k == 'search' else k + ' majority'})"
+                     for s, (o, n, d, k) in p["moves"].items())
     return f"{'applied' if p['applied'] else 'not_simpler'}:{moves}"
 
 
@@ -841,7 +922,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         # uncertainty is borderline_ploidy, so flipping them is not counted again as ambiguity
         flip_margins = dict(margins)
         if prior:
-            bj = {max(o, n) for o, n, _, k in prior["moves"].values() if k == "borderline"}
+            bj = {max(o, n) for o, n, _, k in prior["moves"].values() if k in ("borderline", "search")}
             flip_margins = {s: m for s, m in margins.items()
                             if not any(fracs[s][j - 1] is not None and abs(fracs[s][j - 1] - 0.5) < params.band
                                        for j in bj)}
