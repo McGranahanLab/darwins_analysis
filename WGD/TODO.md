@@ -32,7 +32,7 @@ Deferred work. Decisions and their reasoning are in `docs/previous_analysis_logi
 
 ## Micropipeline
 
-- [ ] Wire the modules into one micropipeline (Piotr, 2026-11-13): WGD steps 00–07 → alpaca_post_hoc_correction (darwins_analysis#3) → tx_data build (`alpaca_corrected`, tx_data#8). Every input and output location is a parameter; nothing hardcoded.
+- [ ] Wire the modules into one micropipeline (Piotr, 2026-11-13): WGD steps 00–07 → alpaca_post_hoc_correction (darwins_analysis#3, merged) → tx_data build (`alpaca_corrected`, tx_data#10). Every input and output location is a parameter; nothing hardcoded.
 
 ## Upstream: PGDD
 
