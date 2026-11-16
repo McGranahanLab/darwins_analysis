@@ -78,8 +78,9 @@ two clones are flagged; that only shows the mechanics.
   least until live cases are checked.
 - ALPACA vs call disagreements on observed clones and reversions: flag only.
 - The corrected tables go to tx_data as new sources (`alpaca_corrected`,
-  `alpaca_wgd_ratios_corrected`): McGranahanLab/tx_data#8 (stacked on #7). Release path proposed:
-  `tracerx_842/ALPACA/output/post_hoc_corrected/{alpaca_corrected.parquet,wgd_ratios_corrected.tsv}`.
+  `alpaca_wgd_ratios_corrected`): McGranahanLab/tx_data#10 (merged 2026-11-16). No fixed release
+  path: tx_data reads this project's `--out` directory, given as `--source-dir` to
+  `scripts/build_alpaca_corrected.py` or as `TX_ALPACA_CORRECTED_DIR` (otherwise its mock location).
 
 ## TODO
 
