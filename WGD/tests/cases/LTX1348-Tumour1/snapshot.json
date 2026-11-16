@@ -1,0 +1,30 @@
+{
+ "events": {
+  "LTX1348-Tumour1:clone5:1": [
+   "mutation",
+   1.0,
+   null
+  ],
+  "LTX1348-Tumour1:clone6:1": [
+   "mutation",
+   1.0,
+   null
+  ]
+ },
+ "gds": "clone5=1,clone6=1",
+ "modifications": [
+  [
+   "alpaca_parent",
+   null
+  ],
+  [
+   "alpaca_parent",
+   null
+  ]
+ ],
+ "ploidy_prior": null,
+ "quality": 1.0,
+ "quality_code": null,
+ "solution_strict": null,
+ "status": "resolved"
+}

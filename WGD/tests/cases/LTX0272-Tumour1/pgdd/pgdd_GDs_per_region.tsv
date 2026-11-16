@@ -1,0 +1,8 @@
+sample_id	tumour_id	gd_clusters	num_gds	gd_events	First_GD	Second_GD
+LTX0272_BP_T1.R1..f879d29ch77v	LTX0272-Tumour1	5,4	1	GD1	GD1	No GD
+LTX0272_BR_T1.R1..bb27a67ch77v	LTX0272-Tumour1	5,4	1	GD1	GD1	No GD
+LTX0272_SU_T1.R1..0cc9eadfh5wt	LTX0272-Tumour1	""	1	GD2	GD2	No GD
+LTX0272_SU_T1.R2..0830b302h5wt	LTX0272-Tumour1	""	0	""	No GD	No GD
+LTX0272_SU_T1.R3..dcdc0e5bh5wt	LTX0272-Tumour1	5,4	1	GD1	GD1	No GD
+LTX0272_SU_T1.R4..b5edad2dh5wt	LTX0272-Tumour1	5,4	1	GD1	GD1	No GD
+LTX0272_SU_T1.R5..3e6968d4h5wt	LTX0272-Tumour1	5,4	1	GD1	GD1	No GD
