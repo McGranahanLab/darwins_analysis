@@ -10,3 +10,4 @@ Repository design to store ai drive analyses
 ## Decks
 
 - [`decks/alpaca_correction/`](decks/alpaca_correction/): how and when the post-hoc ALPACA correction is applied, with synthetic examples (Piotr, 2026-11-16).
+- [`decks/wgd_pipeline/`](decks/wgd_pipeline/): rules and heuristics of the WGD pipeline, steps 00–07, with synthetic examples run through the pipeline code (Piotr, 2026-11-16).

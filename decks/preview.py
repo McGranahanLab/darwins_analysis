@@ -4,7 +4,7 @@ Draws shapes, connectors, text, tables and bar charts with Pillow. Fonts are Dej
 roughly Calibri/Cambria widths (WIDTH_SCALE), so fit is approximate: open the deck in PowerPoint
 for the final check.
 
-    python preview.py alpaca_correction.pptx preview/
+    python ../preview.py <deck>.pptx preview/
 """
 
 from __future__ import annotations
