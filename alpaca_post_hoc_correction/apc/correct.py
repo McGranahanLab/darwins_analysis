@@ -14,8 +14,9 @@ Rule (one clone at a time, deepest first so corrected values feed the next level
   or a chain of missing clones above one; Piotr, 2026-11-13). For every segment and allele, its new copy number x minimises
       sum over children c  |CN_c - 2^g_c * x|   +   |x - CN_parent|
   where g_c is the number of GDs on child c (each GD doubles what the child inherits) and
-  CN_parent is the parent's copy number (1 for `diploid`). Ties keep ALPACA's value if it is
-  among the minimisers, else the smallest. Clones with cells in a sample are observed and are
+  CN_parent is the parent's copy number (1 for `diploid`). x is at least 1 when any child still
+  carries the allele (no regain after loss; Piotr, 2026-11-16). Ties keep ALPACA's value if it
+  is among the minimisers, else the smallest. Clones with cells in a sample are observed and are
   never changed.
 
 Ratios are then recomputed exactly as ALPACA's `analysis.calculate_wgd_ratios`
@@ -61,13 +62,17 @@ def clones_to_correct(parent: dict[str, str], gds: dict[str, int], present: set[
 
 
 def best_cn(child_cn: list[int], child_mult: list[int], parent_cn: int, original: int) -> int:
-    """argmin_x sum_c |CN_c - m_c x| + |x - CN_parent| over x = 0..max; ties: ALPACA's value, then smallest."""
+    """argmin_x sum_c |CN_c - m_c x| + |x - CN_parent| over x = lo..max; ties: ALPACA's value, then smallest.
+
+    lo = 1 when any child still carries the allele: a lost allele cannot come back, so the clone
+    cannot be at 0 (Piotr, 2026-11-16)."""
     hi = max([parent_cn, original] + list(child_cn)) + 1
-    xs = np.arange(hi + 1)
+    lo = 1 if any(c > 0 for c in child_cn) else 0
+    xs = np.arange(lo, hi + 1)
     cost = np.abs(xs - parent_cn).astype(float)
     for cn, m in zip(child_cn, child_mult):
         cost += np.abs(cn - m * xs)
-    best = np.flatnonzero(cost == cost.min())
+    best = xs[cost == cost.min()]
     return int(original) if original in best else int(best[0])
 
 

@@ -109,6 +109,22 @@ def test_chain_of_missing_clones_both_corrected():
     assert res["corrections"]["clone"].to_list() == ["clone2"]
 
 
+def test_no_regain_after_loss():
+    """Piotr, 2026-11-16: x = 0 is not allowed while a child still carries the allele.
+    Three doubled children, two lost the allele after their GD, one kept one copy; diploid parent.
+    Unconstrained, cost(0) = 0+0+1+1 = 2 beats cost(1) = 2+2+1+0 = 5."""
+    assert correct.best_cn([0, 0, 1], [2, 2, 2], 1, 1) == 1
+    assert correct.best_cn([0, 0, 1], [2, 2, 2], 1, 0) == 1                   # not even to keep ALPACA's 0
+    assert correct.best_cn([0, 0, 0], [2, 2, 2], 1, 1) == 0                   # all children lost it: 0 allowed
+    # end to end: clone1 absent above three doubled clones; allele B lost in two of them
+    parent = {"clone1": "diploid", "clone2": "clone1", "clone3": "clone1", "clone4": "clone1"}
+    cn = {"clone1": [(2, 1)] * 4, "clone2": [(2, 0)] * 4, "clone3": [(2, 0)] * 4, "clone4": [(2, 1)] * 4}
+    res = correct.run(alpaca(cn), props({"clone2": 0.3, "clone3": 0.3, "clone4": 0.4}),
+                      calls(parent, {"clone2": 1, "clone3": 1, "clone4": 1}))
+    g = res["alpaca_corrected"].filter(pl.col("clone") == "clone1")
+    assert g["pred_CN_A"].to_list() == [1] * 4 and g["pred_CN_B"].to_list() == [1] * 4
+
+
 def test_flags_only():
     # GD called on clone5 but ALPACA (observed) shows no doubling vs clone1, which has cells: flagged, not fixed
     res = correct.run(alpaca(ALPACA), props({"clone1": 0.1, "clone5": 0.5, "clone6": 0.4}), calls(PARENT, GDS))
