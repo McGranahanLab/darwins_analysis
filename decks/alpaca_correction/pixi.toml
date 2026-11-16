@@ -1,0 +1,19 @@
+[workspace]
+name = "alpaca_correction_deck"
+version = "0.1.0"
+description = "Slide deck: how and when the post-hoc ALPACA correction is applied (synthetic examples)"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+
+[dependencies]
+python = "3.11.*"
+polars = ">=1.0"
+pyarrow = ">=15.0"
+numpy = ">=1.26"
+python-pptx = ">=1.0"
+pytest = ">=8.0"
+
+[tasks]
+deck    = "python make_deck.py"
+preview = "python preview.py alpaca_correction.pptx preview"
+test    = "pytest tests/ -q"
