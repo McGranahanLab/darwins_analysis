@@ -215,7 +215,9 @@ def s_step00(prs):
                   "Rounded major copy number over the genome, against three thresholds", notes=(
         "wgd/pgdd_input.py compute_num_gds, port of 00_prepare_pgdd_input.R. MajCN = max(A, B) per segment, rounded half "
         "to even like R's round(), so 2.5 rounds to 2 and the effective cut-off for >= 2 is a raw major CN of 1.5. "
-        "Fractions are by base pairs. The table is computed by that function on four synthetic samples. Single-clone "
+        "Fractions are by base pairs. The cut-offs sit below the theoretical 2, 4, 8 on purpose (Piotr, 2026-11-16): "
+        "many losses follow a WGD, so observed major CN falls well short of the doubled values. "
+        "The table is computed by that function on four synthetic samples. Single-clone "
         "tumours never go to PGDD: all their GDs are clonal, counted as the mode of num_gds; if samples disagree, "
         "quality is Low (single_clone_num_gds_discordant). Any input problem stops the run (pre-flight)."))
     lad = [("3 GDs", "≥ 50% of the genome at major CN ≥ 4"), ("2 GDs", "≥ 50% at major CN ≥ 3"),
