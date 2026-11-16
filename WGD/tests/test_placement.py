@@ -840,3 +840,20 @@ def test_qc_failed_tumours_in_table_with_null_calls(tmp_path):
     # the comparison with the previous table leaves them out
     cmp = compare.compare(base, out)
     assert cmp["summary"]["tumours_new_qc_failed"] == 2 and cmp["summary"]["tumours_only_new"] == []
+
+
+def test_no_alpaca_tree_row():
+    """Piotr, 2026-11-16: a tumour without an ALPACA tree stays in the table, status no_alpaca_tree, calls null."""
+    T2 = "LTX0902-Tumour1"
+    ev = pl.concat([events((False, True, "4", ["R1"])), events((False, True, "4", ["R1"])).with_columns(
+        pl.lit(T2).alias("tumour_id"), pl.lit("LTX0902-Tumour1:GD1").alias("GD_event_id"))])
+    tu = pl.concat([tumour(), tumour().with_columns(pl.lit(T2).alias("tumour_id"))])
+    res = run(ev, tu)
+    tb = final_table.build_table(res.events, res.tumours, tu, ratios())
+    nt = tb.filter(pl.col("tumour_id") == T2)
+    assert nt.height == 1 and nt["status"][0] == "no_alpaca_tree" and nt["clone"][0] is None
+    for c in ("number_of_gds_at_clone", "total_gds_per_tumour", "quality", "class", "sub_class", "n_unplaced_events"):
+        assert nt[c][0] is None, c
+    assert tb.filter(pl.col("tumour_id") == T)["status"].null_count() == 0
+    cmp = compare.compare(tb.filter(pl.col("tumour_id") == T), tb)
+    assert cmp["summary"]["tumours_new_no_alpaca_tree"] == 1 and cmp["summary"]["tumours_only_new"] == []

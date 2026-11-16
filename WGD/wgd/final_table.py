@@ -16,7 +16,9 @@ when the tumour has no ALPACA tree). QC columns on every row (`with_qc`):
   clonal_gd_only tumours it is `num_clonal_gds` on the MRCA (notebook [40]);
   otherwise the number of events placed on the clone by step 04.
 * status: from step 04 (the notebook's automatic queue status); `unresolved`
-  wherever the notebook left the call to manual review; `qc_failed` for QC-failed tumours.
+  wherever the notebook left the call to manual review; `qc_failed` for QC-failed tumours;
+  `no_alpaca_tree` for QC-passed tumours without an ALPACA tree (one row, null clone, every
+  WGD call null; Piotr, 2026-11-16).
 * class: no_gd -> no_wgd, clonal_gd_only -> clonal_wgd, alpaca_called -> ploidy_only,
   mut_supported -> mut_supported.
 * sub_class (not in the notebook; rule from the tx_data wgd_calls definitions):
@@ -56,6 +58,8 @@ COLUMNS = ("tumour_id", "clone", "parent", "number_of_gds_at_clone", "total_gds_
 QC_FIELDS = ("upstream_qc", "ccf_qc", "truncal_min_ccf", "qc_pass", "qc_reason")
 OUTPUT_COLUMNS = COLUMNS + QC_FIELDS   # wgd_calls.tsv: build_table + with_qc
 QC_FAILED = "qc_failed"
+NO_TREE = "no_alpaca_tree"
+NO_CALL_STATUSES = (QC_FAILED, NO_TREE)   # rows kept for visibility, every WGD call null
 
 
 def sub_class(tree: Tree, subclonal_clones: list[str]) -> str | None:
@@ -161,8 +165,9 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
     for r in tumours.iter_rows(named=True):
         t = r["tumour_id"]
         g = ratios.filter(pl.col("tumour_id") == t)
-        if g.is_empty():
-            continue  # no ALPACA tree: reported by step 04
+        if g.is_empty():  # Piotr, 2026-11-16: listed, with no calls
+            rows.append({"tumour_id": t, "clone": None, "parent": None, "status": NO_TREE})
+            continue
         tree = Tree.from_ratios(g)
         n_at = {c: 0 for c in tree.parent}
         subclonal, unplaced, n_rej = [], 0, 0
@@ -205,7 +210,7 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
               "sub_class": pl.Utf8, "quality_code": pl.Utf8, "worst_event_quality": pl.Float64,
               "worst_event_quality_code": pl.Utf8, "n_unplaced_events": pl.Int64, "n_rejected_events": pl.Int64,
               "ploidy_prior": pl.Utf8}
-    return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone")
+    return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone", nulls_last=True)
 
 
 def with_qc(table: pl.DataFrame, qc: pl.DataFrame | None, ratios: pl.DataFrame) -> pl.DataFrame:

@@ -80,7 +80,8 @@ def main() -> None:
               f"wrote {out / name} and {out / rname}")
     per_t = table.unique("tumour_id")
     n_qc = per_t.filter(pl.col("status") == final_table.QC_FAILED).height
-    print(f"QC-failed tumours (status qc_failed, NA calls): {n_qc}")
+    n_nt = per_t.filter(pl.col("status") == final_table.NO_TREE).height
+    print(f"tumours without calls (NA): {n_qc} qc_failed, {n_nt} no_alpaca_tree")
     print(f"tumours: {per_t.height}, clones: {table.height}")
     print(per_t.group_by("class", "status").len().sort("class", "status"))
     print(f"wrote {out / 'wgd_calls.tsv'}")

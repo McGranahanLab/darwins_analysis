@@ -8,7 +8,7 @@ Reads steps 04 and 05 and answers three questions, as tables, figures and one HT
    and which quality factors fire how often.
 3. Tumours to review by hand: impossible or unresolved solutions, forced GDs, low quality and
    other signs that the copy-number solution (clone proportions, tree, ALPACA CN) is wrong.
-4. Tumours excluded by QC (upstream QC, CCF QC), with the reason; they have no WGD calls.
+4. Tumours without WGD calls: excluded by QC (upstream QC, CCF QC) or without an ALPACA tree, with the reason.
 
 WGD pattern (from the GDs per clone; the MRCA is the clone whose parent is `diploid`):
   no GD | clonal only | clonal + subclonal | subclonal, one lineage | subclonal, parallel
@@ -32,6 +32,7 @@ SUBCLONAL_PATTERNS = PATTERNS[2:]
 # reference categorical palette, fixed order (validated: dataviz validate_palette.js, light surface)
 PATTERN_COLOUR = dict(zip(PATTERNS, ("#898781", "#2a78d6", "#eb6834", "#1baf7a", "#e87ba4")))
 SEVERITY_COLOUR = {"critical": "#d03b3b", "serious": "#ec835a", "warning": "#fab219"}
+NO_CALL_STATUSES = ("qc_failed", "no_alpaca_tree")   # final_table: rows kept for visibility, no calls
 SEVERITY_ORDER = {"critical": 0, "serious": 1, "warning": 2}
 INK, INK2, MUTED, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7", "#fcfcfb"
 SOURCE_LABEL = {"clonal": "clonal (PGDD)", "mutation": "mutation-supported", "mutation_multicluster": "mutation-supported",
@@ -72,7 +73,7 @@ def tumour_table(tumours: pl.DataFrame, calls: pl.DataFrame, events: pl.DataFram
     for r in tumours.iter_rows(named=True):
         t = r["tumour_id"]
         g = calls_by_t.get(t)
-        if g is None:
+        if g is None or g["status"][0] in NO_CALL_STATUSES:
             continue
         parent = dict(zip(g["clone"], g["parent"]))
         gds = {c: n for c, n in zip(g["clone"], g["number_of_gds_at_clone"]) if n}
@@ -478,20 +479,26 @@ th{color:#52514e;font-weight:600}td{font-variant-numeric:tabular-nums}
 """
 
 
-def qc_table(qc: pl.DataFrame | None) -> pl.DataFrame:
-    """QC-failed tumours, one row each (Piotr, 2026-11-16)."""
-    cols = ["tumour_id", "upstream_qc", "ccf_qc", "truncal_min_ccf", "qc_reason"]
-    if qc is None or "qc_pass" not in qc.columns:
-        return pl.DataFrame(schema={c: pl.Float64 if c == "truncal_min_ccf" else pl.Utf8 for c in cols})
-    ok = pl.col("qc_pass").cast(pl.Utf8).str.to_lowercase() == "true"
-    return (qc.filter(~ok).with_columns(pl.col("truncal_min_ccf").cast(pl.Float64, strict=False))
-              .select(cols).sort("tumour_id"))
+NO_CALL_COLUMNS = ["tumour_id", "status", "upstream_qc", "ccf_qc", "truncal_min_ccf", "reason"]
+
+
+def no_calls_table(calls: pl.DataFrame) -> pl.DataFrame:
+    """Tumours in wgd_calls.tsv without WGD calls, one row each (Piotr, 2026-11-16): qc_failed
+    (reason = qc_reason) and no_alpaca_tree."""
+    c = calls.filter(pl.col("status").is_in(NO_CALL_STATUSES)).unique("tumour_id", keep="first")
+    for col in ("upstream_qc", "ccf_qc", "truncal_min_ccf", "qc_reason"):
+        if col not in c.columns:
+            c = c.with_columns(pl.lit(None, pl.Utf8).alias(col))
+    return (c.with_columns(pl.col("truncal_min_ccf").cast(pl.Float64, strict=False),
+                           pl.when(pl.col("status") == "no_alpaca_tree").then(pl.lit("no ALPACA tree"))
+                             .otherwise(pl.col("qc_reason").cast(pl.Utf8)).alias("reason"))
+              .select(NO_CALL_COLUMNS).sort("status", "tumour_id"))
 
 
 def write_report(out: Path, tt: pl.DataFrame, ex: pl.DataFrame, rv: pl.DataFrame, pen: pl.DataFrame,
                  imgs: dict[str, str], title: str, review_quality: float,
-                 qcx: pl.DataFrame | None = None) -> Path:
-    qcx = qcx if qcx is not None else qc_table(None)
+                 ncx: pl.DataFrame | None = None) -> Path:
+    ncx = ncx if ncx is not None else pl.DataFrame(schema={c: pl.Utf8 for c in NO_CALL_COLUMNS})
     n = tt.height
     gd = tt.filter(pl.col("n_gds") > 0).height
     cnt = {p: tt.filter(pl.col("pattern") == p).height for p in PATTERNS}
@@ -500,7 +507,7 @@ def write_report(out: Path, tt: pl.DataFrame, ex: pl.DataFrame, rv: pl.DataFrame
              ("clonal GD", f"{cnt['clonal only'] + cnt['clonal + subclonal']}"),
              ("subclonal GD", f"{sub_any}"), ("parallel GDs", f"{cnt['subclonal, parallel']}"),
              ("to review", f"{rv['tumour_id'].n_unique() if rv.height else 0}"),
-             ("excluded by QC", f"{qcx.height}")]
+             ("no WGD calls", f"{ncx.height}")]
     q_tab = (tt.filter(pl.col("quality").is_not_null() & (pl.col("pattern") != "no GD"))
                .group_by("pattern").agg(pl.len().alias("tumours"), pl.col("quality").median().alias("median"),
                                         pl.col("quality").quantile(0.25).alias("q25"),
@@ -538,12 +545,12 @@ ploidy calls moved by the prior, ambiguous placement).</p>
 {img("review", "Reasons to review by hand") if rv.height else '<p class="note">Nothing to review.</p>'}
 {_table_html(rv, ["severity", "tumour_id", "reason", "evidence", "why", "quality", "pattern"], {"quality": lambda v: f"{v:.3f}"})}
 
-<h2>4. Tumours excluded by QC</h2>
-<p class="note">Upstream QC: every selected solution in the manual QC table FINALIZED. CCF QC: lowest truncal
-tree-cluster meanCCF above 90%. These tumours are in wgd_calls.tsv with status qc_failed and no WGD calls; they are
-not counted above.</p>
-{_table_html(qcx, qcx.columns, {"truncal_min_ccf": lambda v: f"{v:.1f}"}) if qcx.height
- else '<p class="note">No tumour failed QC (or no QC was applied).</p>'}
+<h2>4. Tumours without WGD calls</h2>
+<p class="note">In wgd_calls.tsv with every call NA, not counted above. qc_failed: upstream QC (every selected
+solution in the manual QC table FINALIZED) or CCF QC (lowest truncal tree-cluster meanCCF above 90%) failed.
+no_alpaca_tree: passed QC, but ALPACA has no tree for the tumour.</p>
+{_table_html(ncx, ncx.columns, {"truncal_min_ccf": lambda v: f"{v:.1f}"}) if ncx.height
+ else '<p class="note">Every tumour has WGD calls.</p>'}
 </body></html>"""
     path = out / "report.html"
     path.write_text(doc)
@@ -554,12 +561,12 @@ def run(out: Path, s04: Path, s05: Path, summary: pl.DataFrame | None = None, re
         prior_review_distance: float = 0.05, title: str = "WGD calls: cohort summary") -> dict:
     read = lambda p: pl.read_csv(p, separator="\t", null_values=["NA"], infer_schema_length=None)  # noqa: E731
     tumours, events_placed = read(s04 / "tumours_placed.tsv"), read(s04 / "events_placed.tsv")
-    qcx = qc_table(read(s04 / "tumour_qc.tsv") if (s04 / "tumour_qc.tsv").exists() else None)
     calls, wgd_events = read(s05 / "wgd_calls.tsv"), read(s05 / "wgd_events.tsv")
     for c in ("flags", "event_factors"):
         if c not in wgd_events.columns:
             wgd_events = wgd_events.with_columns(pl.lit(None, pl.Utf8).alias(c))
     out.mkdir(parents=True, exist_ok=True)
+    ncx = no_calls_table(calls)
     tt = tumour_table(tumours, calls, wgd_events, summary)
     ex = pick_examples(tt)
     rv = review_table(tt, wgd_events, review_quality, prior_review_distance)
@@ -575,6 +582,6 @@ def run(out: Path, s04: Path, s05: Path, summary: pl.DataFrame | None = None, re
         out / "examples.tsv", separator="\t", null_value="NA")
     pen.write_csv(out / "quality_factors.tsv", separator="\t", null_value="NA")
     rv.write_csv(out / "review.tsv", separator="\t", null_value="NA")
-    qcx.write_csv(out / "qc_excluded.tsv", separator="\t", null_value="NA")
-    report = write_report(out, tt, ex, rv, pen, imgs, title, review_quality, qcx)
-    return {"tumours": tt, "examples": ex, "review": rv, "factors": pen, "qc_excluded": qcx, "report": report}
+    ncx.write_csv(out / "no_calls.tsv", separator="\t", null_value="NA")
+    report = write_report(out, tt, ex, rv, pen, imgs, title, review_quality, ncx)
+    return {"tumours": tt, "examples": ex, "review": rv, "factors": pen, "no_calls": ncx, "report": report}
