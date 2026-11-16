@@ -130,6 +130,19 @@ def line(slide, x1, y1, x2, y2, *, color=GRID, lw=1.5, arrow=False, dash=False):
     return c
 
 
+def set_notes(prs, slide, notes: str) -> None:
+    """Speaker notes. A deck re-saved by PowerPoint may have a notes master without a body placeholder,
+    so new notes pages get none: copy the body placeholder from another slide's notes page."""
+    ns = slide.notes_slide
+    if ns.notes_text_frame is None:
+        import copy
+        for other in prs.slides:
+            if other is not slide and other.has_notes_slide and other.notes_slide.notes_placeholder is not None:
+                ns.shapes._spTree.append(copy.deepcopy(other.notes_slide.notes_placeholder._element))
+                break
+    ns.notes_text_frame.text = notes
+
+
 def new_slide(prs, title, kicker=None, dark=False, notes="", footer=""):
     s = prs.slides.add_slide(prs.slide_layouts[5])          # "Title Only"
     if dark:
@@ -148,7 +161,7 @@ def new_slide(prs, title, kicker=None, dark=False, notes="", footer=""):
     text(s, W - MX - 1.0, 7.06, 1.0, 0.3, str(n), size=10, color="9FB0B7" if dark else MUTED, margin=0,
          align=PP_ALIGN.RIGHT)
     if notes:
-        s.notes_slide.notes_text_frame.text = notes
+        set_notes(prs, s, notes)
     return s
 
 
