@@ -8,7 +8,8 @@ Reads `<out>/04_placed/`, `<out>/01_pgdd/pgdd_tumours.parquet` and tx_data
   modified_tumours.tsv   one row per departure from the plain rules (ploidy prior, forced GDs),
                    with the strict and final solutions, for manual review
   wgd_events.tsv   one row per GD (unique wgd_event_id), with quality, factors and `rejected`
-  wgd_calls.tsv    one row per ALPACA clone, all GDs
+  wgd_calls.tsv    one row per ALPACA clone, all GDs; QC-failed tumours included with
+                   status qc_failed and NA calls, QC columns on every row (from 04_placed/tumour_qc.tsv)
   wgd_calls_rejected_below_<Q>.tsv   with --reject-below Q: GDs with event_quality < Q dropped,
                    per-clone and per-tumour scores recalculated; mutation-supported GDs are kept
                    unless --reject-mutation-supported
@@ -43,16 +44,21 @@ def main() -> None:
     tumours = read(s04 / "tumours_placed.tsv")
     pgdd_t = pl.read_parquet(args.out / "01_pgdd" / "pgdd_tumours.parquet")
     ratios = pl.read_parquet(args.tx_data_dir / "alpaca_wgd_ratios.parquet")
+    qc_path = s04 / "tumour_qc.tsv"
+    qc = read(qc_path) if qc_path.exists() else None
+    if qc is None:
+        print(f"no {qc_path} (step 04 from before 2026-11-16): QC columns left empty")
     ev_table = final_table.build_events(events, tumours, pgdd_t, ratios, args.reject_below,
                                         reject_mutation_supported=args.reject_mutation_supported)
     table = final_table.build_table(events, tumours, pgdd_t, ratios,
                                     event_table=ev_table.with_columns(pl.lit(False).alias("rejected")))
+    mods = final_table.modifications(tumours, events, table)
+    table = final_table.with_qc(table, qc, ratios)
     out = args.out / "05_table"
     out.mkdir(parents=True, exist_ok=True)
     table.write_csv(out / "wgd_calls.tsv", separator="\t", null_value="NA")
     ev_table.write_csv(out / "wgd_events.tsv", separator="\t", null_value="NA")
     print(f"events: {ev_table.height}")
-    mods = final_table.modifications(tumours, events, table)
     mods.write_csv(out / "modified_tumours.tsv", separator="\t", null_value="NA")
     print(f"modified tumours (prior / forced GDs, for manual review): {mods['tumour_id'].n_unique()} "
           f"-> {out / 'modified_tumours.tsv'}")
@@ -61,6 +67,7 @@ def main() -> None:
     if args.reject_below is not None:
         filt = final_table.build_table(events, tumours, pgdd_t, ratios, reject_below=args.reject_below,
                                        event_table=ev_table)
+        filt = final_table.with_qc(filt, qc, ratios)
         name = f"wgd_calls_rejected_below_{args.reject_below:g}.tsv"
         filt.write_csv(out / name, separator="\t", null_value="NA")
         report = final_table.rejection_report(ev_table, table, filt, args.reject_below)
@@ -72,6 +79,9 @@ def main() -> None:
               f"{report['tumour_id'].n_unique()} tumours; kept {kept_mut} low-quality mutation-supported GDs; "
               f"wrote {out / name} and {out / rname}")
     per_t = table.unique("tumour_id")
+    n_qc = per_t.filter(pl.col("status") == final_table.QC_FAILED).height
+    n_nt = per_t.filter(pl.col("status") == final_table.NO_TREE).height
+    print(f"tumours without calls (NA): {n_qc} qc_failed, {n_nt} no_alpaca_tree")
     print(f"tumours: {per_t.height}, clones: {table.height}")
     print(per_t.group_by("class", "status").len().sort("class", "status"))
     print(f"wrote {out / 'wgd_calls.tsv'}")

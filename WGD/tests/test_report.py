@@ -73,3 +73,27 @@ def test_explain_every_factor_code():
               "minor_clone": "0.15:R3"}
     for c in codes:
         assert not report.explain(c, 0.5, sample.get(c, "x")).startswith(f"x0.50 {c}(")
+
+
+def test_no_calls_section(cohort, tmp_path):
+    """Piotr, 2026-11-16: tumours failing QC or without an ALPACA tree are listed in the report, not counted."""
+    _, out = cohort
+    s05 = tmp_path / "05_table"
+    s05.mkdir()
+    (s05 / "wgd_events.tsv").write_bytes((out / "05_table" / "wgd_events.tsv").read_bytes())
+    calls = pl.read_csv(out / "05_table" / "wgd_calls.tsv", separator="\t", null_values=["NA"], infer_schema_length=None)
+    extra = pl.DataFrame({"tumour_id": ["LTX9998-Tumour1", "LTX9999-Tumour1", "LTX9999-Tumour1"],
+                          "clone": [None, "clone1", "clone2"], "parent": [None, "diploid", "clone1"],
+                          "status": ["no_alpaca_tree", "qc_failed", "qc_failed"],
+                          "upstream_qc": ["pass", "fail", "fail"], "ccf_qc": ["pass", "pass", "pass"],
+                          "truncal_min_ccf": [99.0, 97.5, 97.5],
+                          "qc_reason": [None, "upstream: not FINALIZED", "upstream: not FINALIZED"]})
+    pl.concat([calls, extra], how="diagonal_relaxed").write_csv(s05 / "wgd_calls.tsv", separator="\t", null_value="NA")
+    res = report.run(tmp_path / "07_report", out / "04_placed", s05)
+    nc = res["no_calls"]
+    assert nc.select("tumour_id", "status", "reason").rows() == [
+        ("LTX9998-Tumour1", "no_alpaca_tree", "no ALPACA tree"), ("LTX9999-Tumour1", "qc_failed", "upstream: not FINALIZED")]
+    html = res["report"].read_text()
+    assert "Tumours without WGD calls" in html and "LTX9999-Tumour1" in html and "LTX9998-Tumour1" in html
+    assert (tmp_path / "07_report" / "no_calls.tsv").exists()
+    assert not {"LTX9998-Tumour1", "LTX9999-Tumour1"} & set(res["tumours"]["tumour_id"])

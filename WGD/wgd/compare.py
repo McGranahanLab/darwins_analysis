@@ -34,6 +34,13 @@ def _same(a: pl.Expr, b: pl.Expr) -> pl.Expr:
 
 
 def compare(old: pl.DataFrame, new: pl.DataFrame) -> dict[str, pl.DataFrame | dict]:
+    """Tumours kept only for visibility (status qc_failed or no_alpaca_tree, no calls) are left
+    out: the previous table had QC-passed tumours with an ALPACA tree only. Counts in the summary."""
+    no_call = (new.filter(pl.col("status").is_in(["qc_failed", "no_alpaca_tree"])).unique("tumour_id")
+               if "status" in new.columns else new.clear())
+    qc_failed = sorted(no_call.filter(pl.col("status") == "qc_failed")["tumour_id"])
+    no_tree = sorted(no_call.filter(pl.col("status") == "no_alpaca_tree")["tumour_id"])
+    new = new.filter(~pl.col("tumour_id").is_in(qc_failed + no_tree))
     fields = [f for f in FIELDS if f in old.columns and f in new.columns]
     old_t, new_t = set(old["tumour_id"]), set(new["tumour_id"])
     both = old_t & new_t
@@ -65,6 +72,9 @@ def compare(old: pl.DataFrame, new: pl.DataFrame) -> dict[str, pl.DataFrame | di
 
     summary = {
         "tumours_old": len(old_t), "tumours_new": len(new_t), "tumours_both": len(both),
+        "tumours_new_qc_failed": len(qc_failed),
+        "tumours_new_no_alpaca_tree": len(no_tree),
+        "tumours_qc_failed_in_old": sorted(set(qc_failed) & old_t),
         "tumours_only_old": sorted(old_t - new_t), "tumours_only_new": sorted(new_t - old_t),
         "placement_match": rate("placement_match"),
         **{f"{f}_match": rate(f"{f}_match") for f in fields},

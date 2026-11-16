@@ -146,38 +146,105 @@ class Tree:
 
 # ---- A: QC ------------------------------------------------------------------
 
-def qc_pass(qc_table: Path, release_dir: Path, ccf_threshold: float = 90) -> tuple[set[str], set[str]]:
-    """(tx_QC tumours, tx_QC & ccf_QC tumours). notebook get_qc_df + additional_ccf_qc.
+QC_COLUMNS = ("tumour_id", "upstream_qc", "ccf_qc", "truncal_min_ccf", "qc_pass", "qc_reason")
 
-    `meanCCF` in clusterInfo.txt is in percent (0 to slightly above 100), so the
-    cut-off is 90 (Piotr, 2026-11-09; the notebook's 0.9 assumed fractions).
-    Missing meanCCF occurs only on clusters off the tree; on a truncal tree
-    cluster it is an error.
-    """
+
+def _finalized(qc_table: Path) -> dict[str, bool]:
+    """Upstream QC per tumour in the manual QC table: True if every `selected_solution` row is
+    FINALIZED (notebook get_qc_df). Tumours without a selected row are absent."""
     qc = pl.read_csv(qc_table, separator="\t", infer_schema_length=None)
     qc = qc.filter(pl.col("selected_solution").cast(pl.Utf8).str.to_lowercase() == "true").with_columns(
         (pl.col("patient") + "-Tumour" + pl.col("tumour_id").cast(pl.Float64).cast(pl.Int64).cast(pl.Utf8))
         .alias("patient_tumour"))
-    finalized = (qc.group_by("patient_tumour")
-                   .agg((pl.col("FINALIZED").cast(pl.Utf8).str.to_lowercase() == "true").all().alias("ok"))
-                   .filter("ok")["patient_tumour"].to_list())
-    passed = set()
-    for pt in finalized:
-        patient, tumour = pt.split("-")
-        f = Path(release_dir) / patient / "mutation_trees" / f"tumour_{tumour.replace('Tumour', '')}" / "clusterInfo.txt"
-        if not f.exists():
-            continue  # as in the notebook: no clusterInfo -> not passed
-        # pandas (notebook) reads "NA" as missing; polars needs it spelled out, or meanCCF becomes a string
-        ci = (pl.read_csv(f, separator="\t", infer_schema_length=None, null_values=["NA", "NaN", ""])
-                .drop_nulls(["treeClust", "truncal"])
-                .with_columns(pl.col("meanCCF").cast(pl.Float64, strict=False)))
-        as_bool = lambda c: pl.col(c).cast(pl.Utf8).str.to_lowercase().is_in(["true", "1"])  # noqa: E731
-        trunk = ci.filter(as_bool("treeClust") & as_bool("truncal"))
-        if trunk["meanCCF"].null_count():
-            raise ValueError(f"{f}: missing meanCCF on a truncal tree cluster")
-        if trunk.height and trunk["meanCCF"].min() > ccf_threshold:
-            passed.add(pt)
-    return set(finalized), passed
+    return dict(qc.group_by("patient_tumour")
+                  .agg((pl.col("FINALIZED").cast(pl.Utf8).str.to_lowercase() == "true").all().alias("ok"))
+                  .iter_rows())
+
+
+def _truncal_ccf(release_dir: Path, tumour: str) -> tuple[float | None, str | None]:
+    """(lowest meanCCF over the truncal tree clusters, problem). notebook additional_ccf_qc.
+    Raises ValueError if a truncal tree cluster has no meanCCF."""
+    patient, t = tumour.split("-")
+    f = Path(release_dir) / patient / "mutation_trees" / f"tumour_{t.replace('Tumour', '')}" / "clusterInfo.txt"
+    if not f.exists():
+        return None, "no clusterInfo.txt"  # as in the notebook: no clusterInfo -> not passed
+    # pandas (notebook) reads "NA" as missing; polars needs it spelled out, or meanCCF becomes a string
+    ci = (pl.read_csv(f, separator="\t", infer_schema_length=None, null_values=["NA", "NaN", ""])
+            .drop_nulls(["treeClust", "truncal"])
+            .with_columns(pl.col("meanCCF").cast(pl.Float64, strict=False)))
+    as_bool = lambda c: pl.col(c).cast(pl.Utf8).str.to_lowercase().is_in(["true", "1"])  # noqa: E731
+    trunk = ci.filter(as_bool("treeClust") & as_bool("truncal"))
+    if trunk["meanCCF"].null_count():
+        raise ValueError(f"{f}: missing meanCCF on a truncal tree cluster")
+    if not trunk.height:
+        return None, "no truncal tree cluster"
+    return float(trunk["meanCCF"].min()), None
+
+
+def qc_status(qc_table: Path, release_dir: Path, tumour_ids, ccf_threshold: float = 90) -> pl.DataFrame:
+    """Both QC levels for every tumour in `tumour_ids` (Piotr, 2026-11-16: full visibility; failed
+    tumours stay in the output, annotated, with null WGD calls).
+
+      upstream_qc      pass | fail   manual QC table: every selected solution FINALIZED
+      ccf_qc           pass | fail | not_evaluated   lowest truncal tree-cluster meanCCF > ccf_threshold
+      truncal_min_ccf  that lowest meanCCF (percent)
+      qc_pass          upstream_qc and ccf_qc both pass
+      qc_reason        what failed (null if passed)
+
+    `meanCCF` in clusterInfo.txt is in percent (0 to slightly above 100), so the cut-off is 90
+    (Piotr, 2026-11-09; the notebook's 0.9 assumed fractions). CCF QC is evaluated for every
+    tumour, including those failing upstream QC. A truncal tree cluster without meanCCF is an
+    error for a tumour that passed upstream QC; otherwise ccf_qc is `not_evaluated`.
+    """
+    fin = _finalized(qc_table)
+    rows = []
+    for t in sorted(set(tumour_ids)):
+        reasons = []
+        up = fin.get(t)
+        if up is None:
+            reasons.append("upstream: not in the manual QC table")
+        elif not up:
+            reasons.append("upstream: not FINALIZED")
+        try:
+            ccf, problem = _truncal_ccf(release_dir, t)
+        except ValueError as e:
+            if up:
+                raise
+            ccf, problem = None, f"not evaluated ({e})"
+        if problem and problem.startswith("not evaluated"):
+            ccf_qc = "not_evaluated"
+            reasons.append(f"ccf: {problem}")
+        elif problem:
+            ccf_qc = "fail"
+            reasons.append(f"ccf: {problem}")
+        elif ccf > ccf_threshold:
+            ccf_qc = "pass"
+        else:
+            ccf_qc = "fail"
+            reasons.append(f"ccf: lowest truncal meanCCF {ccf:g} <= {ccf_threshold:g}")
+        rows.append({"tumour_id": t, "upstream_qc": "pass" if up else "fail", "ccf_qc": ccf_qc,
+                     "truncal_min_ccf": ccf, "qc_pass": bool(up) and ccf_qc == "pass",
+                     "qc_reason": "; ".join(reasons) or None})
+    schema = {"tumour_id": pl.Utf8, "upstream_qc": pl.Utf8, "ccf_qc": pl.Utf8, "truncal_min_ccf": pl.Float64,
+              "qc_pass": pl.Boolean, "qc_reason": pl.Utf8}
+    return pl.DataFrame(rows, schema=schema)
+
+
+def qc_not_applied(tumour_ids) -> pl.DataFrame:
+    """The same table when no QC table is given: nothing excluded."""
+    ids = sorted(set(tumour_ids))
+    return pl.DataFrame({"tumour_id": ids, "upstream_qc": ["not_applied"] * len(ids),
+                         "ccf_qc": ["not_applied"] * len(ids), "truncal_min_ccf": [None] * len(ids),
+                         "qc_pass": [True] * len(ids), "qc_reason": [None] * len(ids)},
+                        schema={"tumour_id": pl.Utf8, "upstream_qc": pl.Utf8, "ccf_qc": pl.Utf8,
+                                "truncal_min_ccf": pl.Float64, "qc_pass": pl.Boolean, "qc_reason": pl.Utf8})
+
+
+def qc_pass(qc_table: Path, release_dir: Path, ccf_threshold: float = 90) -> tuple[set[str], set[str]]:
+    """(tx_QC tumours, tx_QC & ccf_QC tumours) over the tumours in the QC table, as the notebook."""
+    finalized = {t for t, ok in _finalized(qc_table).items() if ok}
+    st = qc_status(qc_table, release_dir, finalized, ccf_threshold)
+    return finalized, set(st.filter("qc_pass")["tumour_id"])
 
 
 # ---- B: triage --------------------------------------------------------------
