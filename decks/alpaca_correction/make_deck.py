@@ -469,7 +469,8 @@ def s_how(prs):
                   "The new copy number x best explains the children given their GDs, staying close to the parent",
                   notes=(
         "apc/correct.py best_cn. For each segment and each allele separately, try every integer x from 0 to "
-        "max(parent, ALPACA, children) + 1 and keep the cheapest. Every child of the clone counts, doubled or not: "
+        "max(parent, ALPACA, children) + 1 and keep the cheapest; x = 0 is excluded when any child still carries "
+        "the allele, since a lost allele cannot come back (Piotr, 2026-11-16). Every child of the clone counts, doubled or not: "
         "a child with g GDs is expected at 2^g times x. The parent term uses the parent's current value (1 for "
         "diploid); in a chain the parent is still ALPACA's value at that point, since ancestors are processed "
         "after. Ties keep ALPACA's value if it is among the minimisers, else the smallest. Afterwards total, "
@@ -481,7 +482,7 @@ def s_how(prs):
                   ("g", {"sup": True, "italic": True, "size": 18}), ("c", {"size": 12}), (" · x |   +   | x − CN", {}),
                   ("parent", {"sub": True, "size": 18}), (" |", {})],
               size=30, font=HEAD, italic=False, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-    terms = [([("x", {})], "candidate CN, each integer from 0 to max + 1"),
+    terms = [([("x", {})], "candidate CN, 0 to max + 1; ≥ 1 if a child has the allele"),
              ([("CN", {}), ("c", {"sub": True})], "child c's ALPACA CN, this segment and allele"),
              ([("g", {}), ("c", {"sub": True})], "GDs called on child c (0 if it did not double)"),
              ([("CN", {}), ("parent", {"sub": True})], "parent's current CN; 1 if diploid")]
