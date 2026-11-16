@@ -26,7 +26,8 @@ feed the next level up. For every segment and allele, the new copy number `x` mi
     sum over children c  |CN_c - 2^g_c * x|   +   |x - CN_parent|
 
 with `g_c` the GDs on child `c` and `CN_parent` the parent's copy number (1 for `diploid`).
-Ties keep ALPACA's value if it is among the minimisers, else the smallest. Clones with cells in
+`x` is at least 1 when any child still carries the allele: a lost allele cannot come back
+(Piotr, 2026-11-16). Ties keep ALPACA's value if it is among the minimisers, else the smallest. Clones with cells in
 any sample are observed and never changed. WGD ratios are then recomputed exactly as ALPACA's
 `analysis.calculate_wgd_ratios` (checked against tx_data's `alpaca_wgd_ratios`).
 
