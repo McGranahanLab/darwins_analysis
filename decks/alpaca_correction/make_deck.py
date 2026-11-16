@@ -695,7 +695,7 @@ def s_outputs(prs):
     s = new_slide(prs, "Outputs and where they go",
                   "One run writes seven files; two of them are tx_data sources", notes=(
         "Command from alpaca_post_hoc_correction/README.md. Every input and the output directory are parameters "
-        "(Piotr, 2026-11-13). The two tx_data sources were added in tx_data PR #8 (merged 2026-11-16); the source "
+        "(Piotr, 2026-11-13). The two tx_data sources were added in tx_data PR #10 (merged 2026-11-16); the source "
         "directory is a build parameter (--source-dir or TX_ALPACA_CORRECTED_DIR)."))
     files = [("alpaca_corrected.parquet", "tx_data alpaca schema + pred_CN_*_original + corrected", True),
              ("wgd_ratios_corrected.tsv", "ALPACA's 12-column wgd_ratio_scores format", True),
@@ -714,7 +714,7 @@ def s_outputs(prs):
                   size=14, anchor=MSO_ANCHOR.MIDDLE, margin=0.15)
     x0, y0 = MX + 6.2, 1.95 + 3 * 0.98
     b = box(s, x0, y0, 5.9, 0.82, fill=WHITE, line=CORAL, lw=1.25, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12)
-    fill_text(b, [[("tx_data sources (PR #8)", {"bold": True})],
+    fill_text(b, [[("tx_data sources (PR #10, merged)", {"bold": True})],
                   [("alpaca_corrected · alpaca_wgd_ratios_corrected", {"size": 13, "color": MUTED})]],
               size=14, anchor=MSO_ANCHOR.MIDDLE, margin=0.15)
     cmd = box(s, MX, 5.95, CW, 0.75, fill=INK, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12)
