@@ -1,0 +1,39 @@
+{
+ "events": {
+  "LTX0501-Tumour1:clone4:1": [
+   "mutation",
+   1.0,
+   null
+  ],
+  "LTX0501-Tumour1:clone5:1": [
+   "fill",
+   1.0,
+   null
+  ],
+  "LTX0501-Tumour1:clone6:1": [
+   "fill",
+   1.0,
+   null
+  ]
+ },
+ "gds": "clone4=1,clone5=1,clone6=1",
+ "modifications": [
+  [
+   "alpaca_parent",
+   null
+  ],
+  [
+   "alpaca_parent",
+   null
+  ],
+  [
+   "alpaca_parent",
+   null
+  ]
+ ],
+ "ploidy_prior": null,
+ "quality": 0.9,
+ "quality_code": "fill_count_differs(2 vs 1)",
+ "solution_strict": null,
+ "status": "resolved"
+}

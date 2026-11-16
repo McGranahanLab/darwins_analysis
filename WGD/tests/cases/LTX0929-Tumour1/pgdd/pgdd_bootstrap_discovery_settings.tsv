@@ -1,0 +1,2 @@
+n_boot	seed	stability_threshold	stability_alpha	stability_use_binom_test	stability_adjust_method	bootstrap_unit	phase	check_phase_requires_stable_anchor_in_cluster
+500	1	0.7	0.05	TRUE	BH	tumour_id x sample_id x cluster_id	discovery_only	TRUE

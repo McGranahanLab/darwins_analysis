@@ -1,0 +1,2 @@
+tumour_id	First_GD	Second_GD	num_first_gd	num_second_gd	First_GD_homogen	Second_GD_homogen	GD_status_homogen	GD_statuses	frac_0_gd_regions	frac_1_gd_regions	frac_2_gd_regions	num_clonal_gds	num_subclonal_gds
+LTX0929-Tumour1	Subclonal	Subclonal	2	1	FALSE	FALSE	FALSE	1,2,3	0	0.2	0.2	0	4
