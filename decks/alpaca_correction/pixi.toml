@@ -15,5 +15,5 @@ pytest = ">=8.0"
 
 [tasks]
 deck    = "python make_deck.py"
-preview = "python preview.py alpaca_correction.pptx preview"
+preview = "python ../preview.py alpaca_correction.pptx preview"
 test    = "pytest tests/ -q"
