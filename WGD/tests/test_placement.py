@@ -776,3 +776,67 @@ def test_sample_reversions():
     # 2 GDs on the path, sample at 1: reversion to lower ploidy
     rev = placement.sample_reversions(tree, {"R1": {"clone4": 1.0}}, {"R1": 1}, {"clone1": 1, "clone2": 1}, 0.5)
     assert [(x["clone"], x["gds"]) for x in rev] == [("clone4", 2)]
+
+
+def _qc_inputs(tmp_path):
+    """0901 passes; 0902 truncal CCF 85; 0903 not FINALIZED (CCF fine); 0904 not in the QC table and no
+    clusterInfo; 0905 not FINALIZED with a truncal cluster missing meanCCF."""
+    qc = tmp_path / "qc.tsv"
+    qc.write_text("patient\ttumour_id\tselected_solution\tFINALIZED\n"
+                  "LTX0901\t1\tTRUE\tTRUE\nLTX0902\t1\tTRUE\tTRUE\nLTX0903\t1\tTRUE\tFALSE\n"
+                  "LTX0903\t1\tFALSE\tTRUE\nLTX0905\t1\tTRUE\tFALSE\n")
+    for p, ccf in (("LTX0901", "103"), ("LTX0902", "85"), ("LTX0903", "99"), ("LTX0905", "NA")):
+        d = tmp_path / p / "mutation_trees" / "tumour_1"
+        d.mkdir(parents=True)
+        (d / "clusterInfo.txt").write_text("clusterID\ttruncal\ttreeClust\tSAMPLE\tmeanCCF\n"
+                                           f"1\tTRUE\tTRUE\tR1\t{ccf}\n2\tFALSE\tTRUE\tR1\t40\n")
+    return qc
+
+
+def test_qc_status_annotates_every_tumour(tmp_path):
+    """Piotr, 2026-11-16: both QC levels per tumour, failed tumours kept and annotated."""
+    qc = _qc_inputs(tmp_path)
+    ids = [f"LTX090{i}-Tumour1" for i in range(1, 6)]
+    st = {r["tumour_id"]: r for r in placement.qc_status(qc, tmp_path, ids).iter_rows(named=True)}
+    assert [(st[t]["upstream_qc"], st[t]["ccf_qc"], st[t]["qc_pass"]) for t in ids] == [
+        ("pass", "pass", True), ("pass", "fail", False), ("fail", "pass", False), ("fail", "fail", False),
+        ("fail", "not_evaluated", False)]
+    assert st["LTX0902-Tumour1"]["truncal_min_ccf"] == 85
+    assert st["LTX0902-Tumour1"]["qc_reason"] == "ccf: lowest truncal meanCCF 85 <= 90"
+    assert st["LTX0903-Tumour1"]["qc_reason"] == "upstream: not FINALIZED"
+    assert st["LTX0904-Tumour1"]["qc_reason"] == "upstream: not in the manual QC table; ccf: no clusterInfo.txt"
+    assert st["LTX0901-Tumour1"]["qc_reason"] is None
+    # the old interface still gives the notebook's sets
+    assert placement.qc_pass(qc, tmp_path) == ({"LTX0901-Tumour1", "LTX0902-Tumour1"}, {"LTX0901-Tumour1"})
+
+
+def test_qc_failed_tumours_in_table_with_null_calls(tmp_path):
+    res = run(events((False, True, "4", ["R1"])))
+    base = table(res)
+    T2, T3 = "LTX0902-Tumour1", "LTX0904-Tumour1"                   # T2 has an ALPACA tree, T3 none
+    rt = pl.concat([ratios(), ratios().with_columns(pl.lit(T2).alias("tumour_id"))])
+    qc = pl.DataFrame({"tumour_id": [T, T2, T3], "upstream_qc": ["pass", "pass", "fail"],
+                       "ccf_qc": ["pass", "fail", "fail"], "truncal_min_ccf": [99.0, 85.0, None],
+                       "qc_pass": [True, False, False],
+                       "qc_reason": [None, "ccf: lowest truncal meanCCF 85 <= 90", "upstream: not in the manual QC table"]})
+    out = final_table.with_qc(base, qc, rt)
+    assert out.columns == list(final_table.OUTPUT_COLUMNS)
+    passed = out.filter(pl.col("tumour_id") == T)
+    assert passed.drop(*final_table.QC_FIELDS).equals(base.select(passed.drop(*final_table.QC_FIELDS).columns))
+    assert passed["qc_pass"].all() and set(passed["status"]) != {"qc_failed"}
+    f2 = out.filter(pl.col("tumour_id") == T2)
+    assert f2.height == len(PARENT) and set(f2["status"]) == {"qc_failed"} and f2["parent"].null_count() == 0
+    calls = ["number_of_gds_at_clone", "total_gds_per_tumour", "quality", "class", "sub_class", "quality_code",
+             "worst_event_quality", "n_unplaced_events", "n_rejected_events", "ploidy_prior"]
+    for c in calls:
+        assert out.filter(pl.col("status") == "qc_failed")[c].null_count() == f2.height + 1, c
+    f3 = out.filter(pl.col("tumour_id") == T3)
+    assert f3.height == 1 and f3["clone"][0] is None and f3["qc_reason"][0] == "upstream: not in the manual QC table"
+    # no QC table from step 04: columns present, empty
+    assert final_table.with_qc(base, None, rt)["upstream_qc"].null_count() == base.height
+    # a QC-failed tumour must not have calls
+    with pytest.raises(ValueError, match="QC-failed tumours have WGD calls"):
+        final_table.with_qc(base, qc.with_columns(pl.lit(False).alias("qc_pass")), rt)
+    # the comparison with the previous table leaves them out
+    cmp = compare.compare(base, out)
+    assert cmp["summary"]["tumours_new_qc_failed"] == 2 and cmp["summary"]["tumours_only_new"] == []

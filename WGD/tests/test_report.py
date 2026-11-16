@@ -73,3 +73,22 @@ def test_explain_every_factor_code():
               "minor_clone": "0.15:R3"}
     for c in codes:
         assert not report.explain(c, 0.5, sample.get(c, "x")).startswith(f"x0.50 {c}(")
+
+
+def test_qc_excluded_section(cohort, tmp_path):
+    """Piotr, 2026-11-16: tumours failing upstream or CCF QC are listed in the report, not counted as calls."""
+    _, out = cohort
+    s04 = tmp_path / "04_placed"
+    s04.mkdir()
+    for f in (out / "04_placed").iterdir():
+        (s04 / f.name).write_bytes(f.read_bytes())
+    pl.DataFrame({"tumour_id": ["LTX0981-Tumour1", "LTX9999-Tumour1"], "upstream_qc": ["pass", "fail"],
+                  "ccf_qc": ["pass", "pass"], "truncal_min_ccf": [98.0, 97.5], "qc_pass": [True, False],
+                  "qc_reason": [None, "upstream: not FINALIZED"]}).write_csv(s04 / "tumour_qc.tsv", separator="\t",
+                                                                               null_value="NA")
+    res = report.run(tmp_path / "07_report", s04, out / "05_table")
+    assert res["qc_excluded"]["tumour_id"].to_list() == ["LTX9999-Tumour1"]
+    html = res["report"].read_text()
+    assert "Tumours excluded by QC" in html and "LTX9999-Tumour1" in html and "upstream: not FINALIZED" in html
+    assert (tmp_path / "07_report" / "qc_excluded.tsv").exists()
+    assert "LTX9999-Tumour1" not in res["tumours"]["tumour_id"].to_list()

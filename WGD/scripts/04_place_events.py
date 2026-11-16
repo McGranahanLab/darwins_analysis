@@ -8,14 +8,16 @@ Usage:
 Reads step 01 output (`<out>/01_pgdd/`) and tx_data `alpaca_wgd_ratios`, `clone_proportions`
 and `alpaca` (for the reversion flag). `--summary` defaults to
 `<out>/03_summary/pgdd_cohort_gd_summary.tsv` (used for the H flag). Without
-`--qc-table`/`--release-dir` no tumour QC is applied.
+`--qc-table`/`--release-dir` no tumour QC is applied. QC-failed tumours are not placed, but every
+PGDD tumour is listed in `tumour_qc.tsv` (upstream QC = manual QC table FINALIZED; CCF QC = lowest
+truncal meanCCF > 90), so step 05 can report them with null calls (Piotr, 2026-11-16).
 `--alpaca-score` defaults to `ratio_A`, as in the notebook; `max_AB` is the 2026-11-09 decision.
 `--ploidy-rule`: `fill` (default) places ploidy-only GDs per tumour: clonal and
 mutation-supported GDs are fixed, then GDs are added until every sample reaches its PGDD
 num_gds without exceeding it (see wgd.placement.fill_ploidy); `notebook` runs the old
 rules C and G.
 `--params`: tunable values (default `params.toml`), recorded in run.json.
-Writes `<out>/04_placed/`: events_placed.tsv, tumours_placed.tsv, run.json.
+Writes `<out>/04_placed/`: events_placed.tsv, tumours_placed.tsv, tumour_qc.tsv, run.json.
 """
 
 from __future__ import annotations
@@ -59,14 +61,20 @@ def main() -> None:
     else:
         print(f"no summary at {summary_path}: H flag skipped")
 
+    pgdd_tumours = pl.read_parquet(s01 / "pgdd_tumours.parquet")
     qc = None
     if args.qc_table:
-        tx_qc, qc = placement.qc_pass(args.qc_table, args.release_dir)
-        print(f"QC: {len(tx_qc)} tumours FINALIZED, {len(qc)} also pass truncal CCF > 90%")
+        qc_table = placement.qc_status(args.qc_table, args.release_dir, pgdd_tumours["tumour_id"])
+        qc = set(qc_table.filter("qc_pass")["tumour_id"])
+        print(f"QC: {qc_table.height} PGDD tumours; upstream QC fails "
+              f"{qc_table.filter(pl.col('upstream_qc') == 'fail').height}, CCF QC fails "
+              f"{qc_table.filter(pl.col('ccf_qc') != 'pass').height}; {len(qc)} pass both")
+    else:
+        qc_table = placement.qc_not_applied(pgdd_tumours["tumour_id"])
 
     res = placement.place_events(
         events=pl.read_parquet(s01 / "pgdd_events.parquet"),
-        tumours=pl.read_parquet(s01 / "pgdd_tumours.parquet"),
+        tumours=pgdd_tumours,
         mut_counts=pl.read_parquet(s01 / "pgdd_mut_counts.parquet"),
         ratios=pl.read_parquet(tx / "alpaca_wgd_ratios.parquet"),
         clone_proportions=pl.read_parquet(tx / "clone_proportions.parquet"),
@@ -79,11 +87,16 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     res.events.write_csv(out / "events_placed.tsv", separator="\t", null_value="NA")
     res.tumours.write_csv(out / "tumours_placed.tsv", separator="\t", null_value="NA")
+    qc_table.write_csv(out / "tumour_qc.tsv", separator="\t", null_value="NA")
     t = res.tumours
     run = {
         "alpaca_score": args.alpaca_score,
         "ploidy_rule": args.ploidy_rule,
         "qc_applied": qc is not None,
+        "qc": {"pgdd_tumours": qc_table.height, "pass": int(qc_table["qc_pass"].sum()),
+               "upstream_qc": dict(qc_table.group_by("upstream_qc").len().sort("upstream_qc").iter_rows()),
+               "ccf_qc": dict(qc_table.group_by("ccf_qc").len().sort("ccf_qc").iter_rows()),
+               "failed": qc_table.filter(~pl.col("qc_pass"))["tumour_id"].to_list()},
         "tumours": t.height,
         "triage": dict(t.group_by("triage").len().sort("triage").iter_rows()),
         "status": dict(t.group_by("status").len().sort("status").iter_rows()),

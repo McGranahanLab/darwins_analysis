@@ -34,6 +34,10 @@ def _same(a: pl.Expr, b: pl.Expr) -> pl.Expr:
 
 
 def compare(old: pl.DataFrame, new: pl.DataFrame) -> dict[str, pl.DataFrame | dict]:
+    """QC-failed tumours (status qc_failed, no calls) are left out: the previous table only had
+    QC-passed tumours. Their number is in the summary."""
+    qc_failed = sorted(set(new.filter(pl.col("status") == "qc_failed")["tumour_id"])) if "status" in new.columns else []
+    new = new.filter(~pl.col("tumour_id").is_in(qc_failed))
     fields = [f for f in FIELDS if f in old.columns and f in new.columns]
     old_t, new_t = set(old["tumour_id"]), set(new["tumour_id"])
     both = old_t & new_t
@@ -65,6 +69,8 @@ def compare(old: pl.DataFrame, new: pl.DataFrame) -> dict[str, pl.DataFrame | di
 
     summary = {
         "tumours_old": len(old_t), "tumours_new": len(new_t), "tumours_both": len(both),
+        "tumours_new_qc_failed": len(qc_failed),
+        "tumours_qc_failed_in_old": sorted(set(qc_failed) & old_t),
         "tumours_only_old": sorted(old_t - new_t), "tumours_only_new": sorted(new_t - old_t),
         "placement_match": rate("placement_match"),
         **{f"{f}_match": rate(f"{f}_match") for f in fields},

@@ -8,6 +8,7 @@ Reads steps 04 and 05 and answers three questions, as tables, figures and one HT
    and which quality factors fire how often.
 3. Tumours to review by hand: impossible or unresolved solutions, forced GDs, low quality and
    other signs that the copy-number solution (clone proportions, tree, ALPACA CN) is wrong.
+4. Tumours excluded by QC (upstream QC, CCF QC), with the reason; they have no WGD calls.
 
 WGD pattern (from the GDs per clone; the MRCA is the clone whose parent is `diploid`):
   no GD | clonal only | clonal + subclonal | subclonal, one lineage | subclonal, parallel
@@ -477,8 +478,20 @@ th{color:#52514e;font-weight:600}td{font-variant-numeric:tabular-nums}
 """
 
 
+def qc_table(qc: pl.DataFrame | None) -> pl.DataFrame:
+    """QC-failed tumours, one row each (Piotr, 2026-11-16)."""
+    cols = ["tumour_id", "upstream_qc", "ccf_qc", "truncal_min_ccf", "qc_reason"]
+    if qc is None or "qc_pass" not in qc.columns:
+        return pl.DataFrame(schema={c: pl.Float64 if c == "truncal_min_ccf" else pl.Utf8 for c in cols})
+    ok = pl.col("qc_pass").cast(pl.Utf8).str.to_lowercase() == "true"
+    return (qc.filter(~ok).with_columns(pl.col("truncal_min_ccf").cast(pl.Float64, strict=False))
+              .select(cols).sort("tumour_id"))
+
+
 def write_report(out: Path, tt: pl.DataFrame, ex: pl.DataFrame, rv: pl.DataFrame, pen: pl.DataFrame,
-                 imgs: dict[str, str], title: str, review_quality: float) -> Path:
+                 imgs: dict[str, str], title: str, review_quality: float,
+                 qcx: pl.DataFrame | None = None) -> Path:
+    qcx = qcx if qcx is not None else qc_table(None)
     n = tt.height
     gd = tt.filter(pl.col("n_gds") > 0).height
     cnt = {p: tt.filter(pl.col("pattern") == p).height for p in PATTERNS}
@@ -486,7 +499,8 @@ def write_report(out: Path, tt: pl.DataFrame, ex: pl.DataFrame, rv: pl.DataFrame
     tiles = [("tumours", n), ("with a GD", f"{gd} ({gd / max(n, 1):.0%})"),
              ("clonal GD", f"{cnt['clonal only'] + cnt['clonal + subclonal']}"),
              ("subclonal GD", f"{sub_any}"), ("parallel GDs", f"{cnt['subclonal, parallel']}"),
-             ("to review", f"{rv['tumour_id'].n_unique() if rv.height else 0}")]
+             ("to review", f"{rv['tumour_id'].n_unique() if rv.height else 0}"),
+             ("excluded by QC", f"{qcx.height}")]
     q_tab = (tt.filter(pl.col("quality").is_not_null() & (pl.col("pattern") != "no GD"))
                .group_by("pattern").agg(pl.len().alias("tumours"), pl.col("quality").median().alias("median"),
                                         pl.col("quality").quantile(0.25).alias("q25"),
@@ -523,6 +537,13 @@ tree, ALPACA CN) is probably wrong or the score is below {review_quality:g}; war
 ploidy calls moved by the prior, ambiguous placement).</p>
 {img("review", "Reasons to review by hand") if rv.height else '<p class="note">Nothing to review.</p>'}
 {_table_html(rv, ["severity", "tumour_id", "reason", "evidence", "why", "quality", "pattern"], {"quality": lambda v: f"{v:.3f}"})}
+
+<h2>4. Tumours excluded by QC</h2>
+<p class="note">Upstream QC: every selected solution in the manual QC table FINALIZED. CCF QC: lowest truncal
+tree-cluster meanCCF above 90%. These tumours are in wgd_calls.tsv with status qc_failed and no WGD calls; they are
+not counted above.</p>
+{_table_html(qcx, qcx.columns, {"truncal_min_ccf": lambda v: f"{v:.1f}"}) if qcx.height
+ else '<p class="note">No tumour failed QC (or no QC was applied).</p>'}
 </body></html>"""
     path = out / "report.html"
     path.write_text(doc)
@@ -533,6 +554,7 @@ def run(out: Path, s04: Path, s05: Path, summary: pl.DataFrame | None = None, re
         prior_review_distance: float = 0.05, title: str = "WGD calls: cohort summary") -> dict:
     read = lambda p: pl.read_csv(p, separator="\t", null_values=["NA"], infer_schema_length=None)  # noqa: E731
     tumours, events_placed = read(s04 / "tumours_placed.tsv"), read(s04 / "events_placed.tsv")
+    qcx = qc_table(read(s04 / "tumour_qc.tsv") if (s04 / "tumour_qc.tsv").exists() else None)
     calls, wgd_events = read(s05 / "wgd_calls.tsv"), read(s05 / "wgd_events.tsv")
     for c in ("flags", "event_factors"):
         if c not in wgd_events.columns:
@@ -553,5 +575,6 @@ def run(out: Path, s04: Path, s05: Path, summary: pl.DataFrame | None = None, re
         out / "examples.tsv", separator="\t", null_value="NA")
     pen.write_csv(out / "quality_factors.tsv", separator="\t", null_value="NA")
     rv.write_csv(out / "review.tsv", separator="\t", null_value="NA")
-    report = write_report(out, tt, ex, rv, pen, imgs, title, review_quality)
-    return {"tumours": tt, "examples": ex, "review": rv, "factors": pen, "report": report}
+    qcx.write_csv(out / "qc_excluded.tsv", separator="\t", null_value="NA")
+    report = write_report(out, tt, ex, rv, pen, imgs, title, review_quality, qcx)
+    return {"tumours": tt, "examples": ex, "review": rv, "factors": pen, "qc_excluded": qcx, "report": report}

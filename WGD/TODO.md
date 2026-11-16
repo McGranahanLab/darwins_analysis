@@ -15,7 +15,7 @@ Deferred work. Decisions and their reasoning are in `docs/previous_analysis_logi
 - [ ] Ploidy fill: review the 50% sample-level cut-off and the tie-breaks (spill, then ALPACA score) on the real cohort; check `fill_tie` events.
 - [ ] ALPACA ratio: review the 1.5 concerns (doc §5b): minimum `weight_sum` per allele inside `max(A,B)`, a borderline band as a quality input, and bimodality / calibration checks on real data.
 - [ ] Highlight cases for review (Piotr, 2026-11-10). The pipeline should list, per tumour, with the reason:
-  - a) **failed QC**: excluded by manual QC (`FINALIZED`) or truncal CCF ≤ 90. Today these are silently dropped in step 04, so report them instead (tumour, which check failed);
+  - a) ✅ **failed QC** (2026-11-16): upstream QC (manual `FINALIZED`) and CCF QC (truncal CCF ≤ 90) failures are kept in `wgd_calls.tsv` with `status = qc_failed`, NA calls and the QC columns, and listed in the step 07 report;
   - b) **low quality**: `quality = Low`, with its `quality_code`;
   - c) **unlikely solutions**, e.g. reversion to diploid (step 04 flag `reversion`). Also candidates: `fill` incomplete (`missing:`/`over:`), `fill_tie`, `no_alpaca_tree`, `fixed_event_not_on_tree`, the path-vs-ploidy mismatch (H), a fill GD count differing from PGDD's ploidy-only event count, and multi-cluster parent–child events.
   Suggested output: `05_table/review.tsv` (tumour_id, category, reason) plus counts in a run summary.

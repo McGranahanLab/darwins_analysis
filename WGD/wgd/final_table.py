@@ -1,15 +1,22 @@
 """Step 05: per-clone WGD table in the format of the previous release table.
 
-One row per ALPACA clone of every QC-passed PGDD tumour:
+One row per ALPACA clone of every PGDD tumour:
 
   tumour_id, clone, parent, number_of_gds_at_clone, total_gds_per_tumour,
-  quality, status, class, sub_class   (+ quality_code, n_unplaced_events)
+  quality, status, class, sub_class   (+ quality_code, n_unplaced_events, QC columns)
+
+Tumours failing QC are kept for full visibility (Piotr, 2026-11-16): `status = qc_failed`,
+every WGD call null (NA in the TSV), one row per ALPACA clone (a single row with a null clone
+when the tumour has no ALPACA tree). QC columns on every row (`with_qc`):
+* upstream_qc: pass | fail | not_applied (manual QC table, every selected solution FINALIZED).
+* ccf_qc: pass | fail | not_evaluated | not_applied (lowest truncal meanCCF > 90).
+* truncal_min_ccf, qc_pass, qc_reason (what failed).
 
 * number_of_gds_at_clone: GDs placed on this clone (not cumulative). For
   clonal_gd_only tumours it is `num_clonal_gds` on the MRCA (notebook [40]);
   otherwise the number of events placed on the clone by step 04.
 * status: from step 04 (the notebook's automatic queue status); `unresolved`
-  wherever the notebook left the call to manual review.
+  wherever the notebook left the call to manual review; `qc_failed` for QC-failed tumours.
 * class: no_gd -> no_wgd, clonal_gd_only -> clonal_wgd, alpaca_called -> ploidy_only,
   mut_supported -> mut_supported.
 * sub_class (not in the notebook; rule from the tx_data wgd_calls definitions):
@@ -46,6 +53,9 @@ CLASS = {"no_gd": "no_wgd", "clonal_gd_only": "clonal_wgd",
 COLUMNS = ("tumour_id", "clone", "parent", "number_of_gds_at_clone", "total_gds_per_tumour",
            "quality", "status", "class", "sub_class", "quality_code", "worst_event_quality", "worst_event_quality_code",
            "n_unplaced_events", "n_rejected_events", "ploidy_prior")
+QC_FIELDS = ("upstream_qc", "ccf_qc", "truncal_min_ccf", "qc_pass", "qc_reason")
+OUTPUT_COLUMNS = COLUMNS + QC_FIELDS   # wgd_calls.tsv: build_table + with_qc
+QC_FAILED = "qc_failed"
 
 
 def sub_class(tree: Tree, subclonal_clones: list[str]) -> str | None:
@@ -196,6 +206,32 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
               "worst_event_quality_code": pl.Utf8, "n_unplaced_events": pl.Int64, "n_rejected_events": pl.Int64,
               "ploidy_prior": pl.Utf8}
     return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone")
+
+
+def with_qc(table: pl.DataFrame, qc: pl.DataFrame | None, ratios: pl.DataFrame) -> pl.DataFrame:
+    """Add the QC columns to every row and one row per ALPACA clone for each QC-failed tumour,
+    with `status = qc_failed` and every WGD call null (Piotr, 2026-11-16). `qc`: step 04's
+    tumour_qc.tsv; None (older step 04 output) leaves the QC columns null."""
+    schema = {"upstream_qc": pl.Utf8, "ccf_qc": pl.Utf8, "truncal_min_ccf": pl.Float64, "qc_pass": pl.Boolean,
+              "qc_reason": pl.Utf8}
+    if qc is None:
+        return table.with_columns(*[pl.lit(None, d).alias(c) for c, d in schema.items()])
+    qc = qc.select("tumour_id", *[pl.col(c).cast(d) for c, d in schema.items()])
+    out = table.join(qc, on="tumour_id", how="left")
+    failed = qc.filter(~pl.col("qc_pass"))
+    placed = set(table["tumour_id"])
+    if bad := sorted(set(failed["tumour_id"]) & placed):
+        raise ValueError(f"QC-failed tumours have WGD calls (step 04 run without QC?): {bad[:5]}")
+    rows = []
+    for r in failed.iter_rows(named=True):
+        g = ratios.filter(pl.col("tumour_id") == r["tumour_id"])
+        clones = list(Tree.from_ratios(g).parent.items()) if g.height else [(None, None)]
+        rows += [{"tumour_id": r["tumour_id"], "clone": c, "parent": p, "status": QC_FAILED,
+                  **{k: r[k] for k in schema}} for c, p in clones]
+    extra = pl.DataFrame(rows, schema={"tumour_id": pl.Utf8, "clone": pl.Utf8, "parent": pl.Utf8,
+                                       "status": pl.Utf8, **schema})
+    return (pl.concat([out, extra], how="diagonal_relaxed").select(OUTPUT_COLUMNS)
+              .sort("tumour_id", "clone", nulls_last=True))
 
 
 MODIFICATION_COLUMNS = ("tumour_id", "modification", "samples", "detail", "solution_strict", "solution_final",
