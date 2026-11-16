@@ -472,6 +472,50 @@ def s_passes(prs, rl):
         size=13, margin=0, space_after=3)
 
 
+def s_fill_example(prs, fw):
+    steps = ex.fill_steps(fw)
+    t = fw.tumour
+    s = new_slide(prs, "Worked example: the fill, one GD at a time",
+                  "The clonal GD goes on first; then each added GD is the best candidate under the targets",
+                  notes=(
+        "Synthetic tumour run through the fill (wgd/placement.py fill_ploidy). PGDD gives R1 3 GDs, R2 2 and R3 1; "
+        "the clonal GD on clone1 is fixed first, which puts every sample at 1. Step 1: clone2 raises both R1 and R2 "
+        "without pushing any sample above its target (R3 has 40% clone5 under clone2, which stays under half, so R3 "
+        "stays at 1; those cells count as above target, criterion b). clone1 and clone3 would push R3 to 2; clone4 "
+        "and clone5 raise only one sample. Step 2: only R1 is short; clone2 again (or clone1) would push R2 to 3, "
+        "clone4 raises R1 alone. Every sample is then on target: status "
+        f"{t['status']}, quality {t['quality']:.2f}. PGDD's two ploidy-only events are superseded by these GDs."))
+    tree(s, fw, MX + 0.2, 1.95, 3.9, 2.2, pill=(0.95, 0.36), font=11)
+    head = ["sample", "clones", "PGDD", "GD 1", "GD 2", "GD 3"]
+    body = [[smp, ", ".join(f"{c} {p:.0%}" for c, p in fw.cp[smp].items()), str(fw.num_gds[smp]),
+             *[str(st["levels"][smp]) for st in steps]] for smp in fw.num_gds]
+    hl = {(r + 1, 5): (PALE_AMBER, INK) for r in range(len(body))}
+    table(s, MX, 4.4, 4.75, [head] + body, [0.7, 2.1, 0.6, 0.45, 0.45, 0.45], size=11, row_h=0.36, highlight=hl)
+    gd_names = [f"{st['added'] or 'clone1'}" for st in steps]
+    text(s, MX, 5.95, 4.75, 0.8, [[("Sample level after GD 1 (clonal, ", {"bold": True}),
+                                    (f"{gd_names[0]}), 2 ({gd_names[1]}), 3 ({gd_names[2]}). ", {"bold": True}),
+                                    "The last column matches PGDD, so the fill stops."]], size=12, margin=0)
+    x2, w2 = MX + 5.15, CW - 5.15
+    y = 1.95
+    for i, st in enumerate(steps[1:], 1):
+        short = ", ".join(f"{k} {steps[i - 1]['levels'][k]}/{fw.num_gds[k]}" for k in fw.num_gds
+                          if steps[i - 1]["levels"][k] < fw.num_gds[k])
+        text(s, x2, y, w2, 0.32, [[(f"Step {i}: ", {"bold": True}), f"short: {short}  →  GD on ",
+                                   (st["added"], {"bold": True, "color": CORAL})]], size=13, margin=0)
+        rows = [["candidate", "raises (below target)", "pushes above target", "cells above target"]]
+        hl = {}
+        for r, c in enumerate(st["candidates"], 1):
+            rows.append([c["clone"], ", ".join(c["raised"]) or "—", ", ".join(c["over"]) or "—", f"{c['above']:.1f}"])
+            if c["clone"] == st["added"]:
+                hl.update({(r, k): (PALE_CORAL, CORAL) for k in range(4)})
+            elif c["over"]:
+                hl[(r, 2)] = ("F3F5F6", MUTED)
+        table(s, x2, y + 0.36, w2, rows, [1.1, 2.0, 1.95, w2 - 5.05], size=11, row_h=0.3, highlight=hl)
+        y += 0.36 + 0.3 * len(rows) + 0.22
+    text(s, x2, y - 0.08, w2, 0.3, "Not allowed: any sample above its target. Then most samples raised; "
+                                   "then fewest cells above target.", size=11, color=MUTED, margin=0)
+
+
 def s_prior(prs, ps, pa):
     tp, ta = ps.tumour, pa.tumour
     s = new_slide(prs, "Borderline samples: the ploidy prior",
@@ -656,6 +700,7 @@ def build(out: Path) -> Path:
     s_fill(prs)
     s_ties(prs)
     s_passes(prs, cases["relaxed"])
+    s_fill_example(prs, cases["fill_walk"])
     s_prior(prs, cases["prior_strict"], cases["prior_applied"])
     s_fail(prs, cases["reversion"])
     s_quality(prs)

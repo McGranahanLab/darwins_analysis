@@ -193,8 +193,51 @@ def fixed() -> Case:
     return Case("fixed", **FIXED).run()
 
 
+# Worked example of the fill: clonal GD fixed; R1 needs 3 GDs, R2 2, R3 1. The fill adds clone2 (raises R1
+# and R2 at once; R3's 40% of clone5 stays under half) and then clone4 (clone2 again would push R2 to 3).
+WALK = dict(parent={"clone1": "diploid", "clone2": "clone1", "clone3": "clone1", "clone4": "clone2",
+                    "clone5": "clone2"},
+            cp={"R1": {"clone4": 1.0}, "R2": {"clone5": 0.7, "clone3": 0.3}, "R3": {"clone3": 0.6, "clone5": 0.4}},
+            num_gds={"R1": 3, "R2": 2, "R3": 1},
+            events=[(True, False, None, ["R1", "R2", "R3"]), (False, False, None, ["R1", "R2"]),
+                    (False, False, None, ["R1"])],
+            first_gd="Clonal", ratio={"clone1": 1.9, "clone2": 1.7, "clone4": 1.8})
+
+
+def fill_walk() -> Case:
+    return Case("fill_walk", **WALK).run()
+
+
+def fill_steps(case: Case) -> list[dict]:
+    """The fill's GDs in order (fixed ones first), each with every candidate clone scored on the first
+    two criteria: samples raised that were below target, and whether any sample ends above target
+    (not allowed); plus the share of cells above their sample's target (criterion b)."""
+    ev = case.res.events
+    fixed = [c for c, lb in zip(ev["placed_clone"], ev["placed_as"]) if c and not str(lb).startswith("fill_")]
+    added = [c for c, lb in zip(ev["placed_clone"], ev["placed_as"]) if c and str(lb).startswith("fill_")]
+    tree = placement.Tree(case.parent)
+    gds: dict[str, int] = {}
+    for c in fixed:
+        gds[c] = gds.get(c, 0) + 1
+    steps = [{"added": None, "gds": dict(gds), "levels": case.levels(gds), "candidates": []}]
+    for chosen in added:
+        before = case.levels(gds)
+        cands = []
+        for c in case.parent:
+            trial = {**gds, c: gds.get(c, 0) + 1}
+            lv = case.levels(trial)
+            raised = [s for s in lv if lv[s] > before[s] and before[s] < case.num_gds[s]]
+            over = [s for s in lv if lv[s] > case.num_gds[s]]
+            path = lambda x: sum(trial.get(a, 0) for a in [x] + tree.ancestors(x))  # noqa: E731
+            above = sum(p for s, comp in case.cp.items() for x, p in comp.items() if path(x) > case.num_gds[s])
+            cands.append({"clone": c, "raised": raised, "over": over, "above": above})
+        gds[chosen] = gds.get(chosen, 0) + 1
+        steps.append({"added": chosen, "gds": dict(gds), "levels": case.levels(gds), "candidates": cands})
+    return steps
+
+
 def all_cases() -> dict[str, Case]:
-    cs = [nested_fill(), stacked_notebook(), stacked_fill(), prior_strict(), prior_applied(), relaxed(), reversion(), fixed()]
+    cs = [nested_fill(), stacked_notebook(), stacked_fill(), prior_strict(), prior_applied(), fill_walk(), relaxed(), reversion(), fixed()]
     return {c.key: c for c in cs}
 
 

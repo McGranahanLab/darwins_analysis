@@ -1,7 +1,7 @@
 # Deck: WGD pipeline rules and heuristics
 
 The rules and heuristics of [`WGD/`](../../WGD/), steps 00–07, for the lab (Piotr, 2026-11-16).
-17 slides, speaker notes on each: `wgd_pipeline.pptx`.
+18 slides, speaker notes on each: `wgd_pipeline.pptx`.
 
 | # | Slide |
 |---|---|
@@ -14,11 +14,12 @@ The rules and heuristics of [`WGD/`](../../WGD/), steps 00–07, for the lab (Pi
 | 8 | Why not per event: the old rule over-doubles a sample, the fill doesn't |
 | 9–10 | The ploidy fill and its tie-breaks |
 | 11 | Relaxed and minor-clone passes |
-| 12 | The ploidy prior for borderline samples |
-| 13 | Failures and ALPACA checks (reversion detector, H, unplaced events) |
-| 14–15 | Quality factors (values read from `wgd.params`); per-event quality and `--reject-below` |
-| 16 | Outputs and the review list |
-| 17 | Tuning, safeguards, open questions |
+| 12 | Worked example of the fill, step by step, with every candidate scored (Piotr, 2026-11-16) |
+| 13 | The ploidy prior for borderline samples |
+| 14 | Failures and ALPACA checks (reversion detector, H, unplaced events) |
+| 15–16 | Quality factors (values read from `wgd.params`); per-event quality and `--reject-below` |
+| 17 | Outputs and the review list |
+| 18 | Tuning, safeguards, open questions |
 
 ## Where the numbers come from
 
@@ -37,5 +38,5 @@ pixi run test
 pixi run preview   # rough PNGs + text-overflow report in preview/ (no LibreOffice needed)
 ```
 
-Needs `../../WGD` (imported, not installed). The preview is approximate; the deck has not been opened
+Needs `../../WGD` (imported, not installed). **The committed `.pptx` has hand edits by Piotr (2026-11-16: slide 8 hidden, wording on slides 2, 4, 5, 6, 7, some notes) that `make_deck.py` doesn't have**: rebuilding overwrites them. New slides are inserted into the edited file instead (slide 12, 2026-11-16). The preview is approximate; the deck has not been opened
 in PowerPoint yet.
