@@ -65,8 +65,9 @@ def sample_key(sample: str) -> str:
 
 
 def region_label(key: str) -> str:
-    """Short region name for codes: LTX1018_SU_T1-R2 -> R2, LTX1018_SU_FLN01 -> FLN01."""
-    return key.split("_")[-1].split("-")[-1]
+    """Sample name for codes: the full sample stem, `LTX0542_SU_T1-R1` (hash dropped). Region-only
+    names (`R1`) clash in multi-tumour patients, e.g. T1-R1 vs T2-R1 (Piotr, 2026-11-17, LTX0542)."""
+    return sample_key(key)
 
 
 def strip_clone(clusters: str | None) -> str | None:

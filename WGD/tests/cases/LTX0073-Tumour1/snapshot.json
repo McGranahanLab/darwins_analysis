@@ -25,12 +25,12 @@
  "modifications": [
   [
    "ploidy_prior_lowered",
-   "R3"
+   "LTX0073_SU_T1-R3"
   ]
  ],
- "ploidy_prior": "applied:R3 3>2 (0.077; search)",
+ "ploidy_prior": "applied:LTX0073_SU_T1-R3 3>2 (0.077; search)",
  "quality": 0.332,
- "quality_code": "alpaca_disagrees(1.14:clone7);prior_lowered(R3:0.077);borderline_ploidy(0.031:R4)",
+ "quality_code": "alpaca_disagrees(1.14:clone7);prior_lowered(LTX0073_SU_T1-R3:0.077);borderline_ploidy(0.031:LTX0073_SU_T1-R4)",
  "solution_strict": "clone1=1,clone14=1,clone3=1,clone7=2",
  "status": "resolved"
 }

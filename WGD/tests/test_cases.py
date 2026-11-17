@@ -86,7 +86,7 @@ def test_ltx0272_gd_on_clone5_fails_as_reversion_to_diploid():
     row = r["tumours"].row(0, named=True)
     assert r["gds"] == "clone2=1,clone5=1"
     assert row["status"] == "failed" and row["quality"] == 0.0
-    assert "reversion_to_diploid(clone12,clone11,clone8,clone10,clone6:R2(0<1))" in row["quality_code"]
+    assert "reversion_to_diploid(clone12,clone11,clone8,clone10,clone6:LTX0272_SU_T1-R2(0<1))" in row["quality_code"]
     ev = {e["clone"]: e for e in r["wgd_events"].iter_rows(named=True)}
     assert ev["clone5"]["event_quality"] == 0.0 and ev["clone2"]["event_quality"] > 0
     assert r["modified_tumours"]["modification"].to_list() == ["failed_reversion_to_diploid"]
@@ -101,9 +101,9 @@ def test_ltx0552_minor_clone_pass():
     assert r["gds"] == "clone14=1,clone21=1,clone7=1"
     r = replay(pgdd_tables(d / "pgdd", t), ratios, cp, PARAMS)
     flags = {e["clone"]: e["flags"] for e in r["wgd_events"].iter_rows(named=True)}
-    assert flags["clone20"] == "minor_clone_fill(R3:0.07,R4:0.04,R5:0.12);alpaca_parent(clone1:2.14)"
+    assert flags["clone20"] == "minor_clone_fill(LTX0552_SU_T2-R3:0.07,LTX0552_SU_T2-R4:0.04,LTX0552_SU_T2-R5:0.12);alpaca_parent(clone1:2.14)"
     assert flags["clone14"] == "alpaca_parent(clone1:2.14)"
     q = {e["clone"]: (e["event_quality"], e["event_quality_code"]) for e in r["wgd_events"].iter_rows(named=True)}
     # minor GDs: 0.6 + 0.3 * share / 0.5 on their largest share; ALPACA judged on clone1 (2.14): no penalty
-    assert q["clone20"] == (pytest.approx(0.6 + 0.3 * 0.12 / 0.5, abs=1e-3), "minor_clone(0.12:R5)")
+    assert q["clone20"] == (pytest.approx(0.6 + 0.3 * 0.12 / 0.5, abs=1e-3), "minor_clone(0.12:LTX0552_SU_T2-R5)")
     assert q["clone14"] == (1.0, None)
