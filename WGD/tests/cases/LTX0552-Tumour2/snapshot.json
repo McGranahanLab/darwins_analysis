@@ -3,7 +3,7 @@
   "LTX0552-Tumour2:clone10:1": [
    "fill",
    0.648,
-   "minor_clone(0.08:R3)"
+   "minor_clone(0.08:LTX0552_SU_T2-R3)"
   ],
   "LTX0552-Tumour2:clone14:1": [
    "fill",
@@ -13,7 +13,7 @@
   "LTX0552-Tumour2:clone20:1": [
    "fill",
    0.672,
-   "minor_clone(0.12:R5)"
+   "minor_clone(0.12:LTX0552_SU_T2-R5)"
   ],
   "LTX0552-Tumour2:clone21:1": [
    "fill",
@@ -23,7 +23,7 @@
   "LTX0552-Tumour2:clone22:1": [
    "fill",
    0.654,
-   "minor_clone(0.09:R3)"
+   "minor_clone(0.09:LTX0552_SU_T2-R3)"
   ],
   "LTX0552-Tumour2:clone7:1": [
    "mutation",
@@ -72,7 +72,7 @@
  ],
  "ploidy_prior": null,
  "quality": 0.583,
- "quality_code": "minor_clone(0.08:R3);fill_count_differs(5 vs 1)",
+ "quality_code": "minor_clone(0.08:LTX0552_SU_T2-R3);fill_count_differs(5 vs 1)",
  "solution_strict": null,
  "status": "resolved"
 }

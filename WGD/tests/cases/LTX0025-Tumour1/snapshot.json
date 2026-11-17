@@ -20,12 +20,12 @@
  "modifications": [
   [
    "ploidy_prior_not_simpler",
-   "R2"
+   "LTX0025_SU_T1-R2"
   ]
  ],
- "ploidy_prior": "not_simpler:R2 1>2 (0.036; search)",
+ "ploidy_prior": "not_simpler:LTX0025_SU_T1-R2 1>2 (0.036; search)",
  "quality": 0.339,
- "quality_code": "ambiguous_solution(alt:clone1=1,clone2=1,clone3=1);borderline_ploidy(0.036:R2)",
+ "quality_code": "ambiguous_solution(alt:clone1=1,clone2=1,clone3=1);borderline_ploidy(0.036:LTX0025_SU_T1-R2)",
  "solution_strict": "clone1=1,clone3=2",
  "status": "resolved"
 }

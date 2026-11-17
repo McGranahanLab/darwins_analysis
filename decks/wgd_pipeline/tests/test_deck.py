@@ -30,8 +30,8 @@ def test_outcomes_shown_on_the_slides(cases):
     assert new.levels() == new.num_gds
     ps, pa = cases["prior_strict"], cases["prior_applied"]
     assert ps.tumour["status"] == "unresolved" and pa.gds() == {"clone1": 1}
-    assert pa.tumour["ploidy_prior"].startswith("applied:R4 0>1") and pa.tumour["quality"] > ps.tumour["quality"]
-    assert cases["relaxed"].gds() == {"clone4": 1} and "minority_coverage(0.40:R1)" in cases["relaxed"].tumour["quality_code"]
+    assert pa.tumour["ploidy_prior"].startswith("applied:SYN0001_SU_T1-R4 0>1") and pa.tumour["quality"] > ps.tumour["quality"]
+    assert cases["relaxed"].gds() == {"clone4": 1} and "minority_coverage(0.40:SYN0001_SU_T1-R1)" in cases["relaxed"].tumour["quality_code"]
     rv = cases["reversion"].tumour
     assert rv["status"] == "failed" and rv["quality"] == 0 and rv["quality_code"].startswith("reversion_to_diploid")
     fw = cases["fill_walk"]
