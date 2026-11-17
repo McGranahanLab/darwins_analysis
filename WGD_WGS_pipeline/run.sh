@@ -10,7 +10,7 @@
 #   wgd00    WGD step 00: per-sample num_gds, PGDD input table (single-clone tumours set aside)
 #   pgdd     ParallelGDDetect (detect_par_gd) with [pgdd.settings]
 #   wgd01    parse PGDD          wgd02  prune to the ALPACA tree     wgd03  per-sample summary
-#   wgd04    place GDs ([wgd.params], QC if [qc].enabled)
+#   wgd04    place GDs ([wgd.params], QC if [qc].enabled); single-clone tumours by ploidy on their one clone
 #   wgd05    per-clone table; GDs below [wgd].quality_cutoff rejected (wgd_calls_rejected_below_<Q>.tsv)
 #   wgd07    cohort report (07_report/report.html)
 #   correct  ALPACA post-hoc correction on the (filtered) calls
@@ -70,7 +70,7 @@ step_pgdd() {
   "${rscript[@]}" "$HERE/pipeline/run_pgdd.R" "$(cfg pgdd.src)" "$W/00_pgdd_input/pgdd_input_all_tumours.tsv" \
     "$OUT/config/pgdd_settings.json" "$P"
 }
-step_wgd01() { wgdpy "$WGD/scripts/01_parse_pgdd.py" --pgdd-dir "$P" --out "$W"; }
+step_wgd01() { wgdpy "$WGD/scripts/01_parse_pgdd.py" --pgdd-dir "$P" --out "$W" --expected-settings "$OUT/config/pgdd_settings.json"; }
 step_wgd02() { wgdpy "$WGD/scripts/02_prune_tree.py" --tx-data-dir "$TX" --out "$W"; }
 step_wgd03() {
   wgdpy "$WGD/scripts/03_generate_summary.py" --pgdd-input "$W/00_pgdd_input/pgdd_input_all_tumours.tsv" \

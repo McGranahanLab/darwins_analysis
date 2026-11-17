@@ -78,12 +78,16 @@ pixi run --manifest-path ../WGD/pixi.toml pytest tests/ -q
 `tests/make_fixture.py` writes a synthetic WGS store with every table (including the proposed ones);
 the last test runs the whole pipeline on it, PGDD included (skipped without pixi + micromamba).
 
+## Single-clone tumours
+
+Step 00 sets single-clone tumours aside (they don't go to PGDD). Since 2026-11-17 (Piotr) step 04 reads
+them back (`00_pgdd_input/single_clone_samples.tsv`): triage `single_clone`, no events, and the ploidy
+fill places GDs on their only clone until every sample matches its `num_gds`, with the ploidy prior,
+quality factors and QC as for any tumour. Class `clonal_wgd` or `no_wgd`. Samples that disagree and
+can't be reconciled leave the tumour `unresolved`.
+
 ## Known gaps
 
-- **Single-clone tumours** never reach `wgd_calls.tsv`: step 00 sets them aside
-  (`00_pgdd_input/single_clone_events.tsv`) and steps 04–05 don't read them back, so the correction
-  skips them. This affects WES too, and matters more for WGS.
-- Step 01 checks the PGDD run against the settings hard-coded in `WGD/wgd/pgdd.py`, not against
-  `[pgdd.settings]`: changing a setting here gives a warning there (and every setting warns when
-  PGDD's `mut_counts` is empty).
 - TODO (tx_data): give the manual QC mock the real file's full column set.
+- Needs darwins_analysis PR "WGD: single-clone tumours …" (step 04 `--single-clone`, step 01
+  `--expected-settings`) merged first; step 01 now checks PGDD against `[pgdd.settings]`.
