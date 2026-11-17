@@ -58,11 +58,12 @@ cd ../../tx_data && pixi run build sandbox && cd -   # tx_data mock cohort, with
 ./run.sh config.sandbox.toml                          # writes output/sandbox/
 ```
 
-On the mock (2026-11-17): 11 tumours, 8 single-clone (set aside, see Known gaps); LTX0004 gets a clonal
-GD; LTX0103 a borderline clonal GD (genome fraction 0.53) that the 0.3 cut-off rejects;
-LTX0104-Tumour2 is `qc_failed` (truncal CCF 86 in the mock). Step 01 warns that the PGDD settings
-are missing because PGDD's `mut_counts` is empty when no cluster is tested; the settings used are
-in `pgdd/run.json`.
+On the mock (2026-11-17, with the single-clone change): all 11 tumours reach `wgd_calls.tsv`. The
+8 single-clone ones are placed by ploidy: LTX0001 and LTX0102 (WGD-like, ploidy 3.6–3.9) get one
+clonal GD, the rest none, all quality 1.0 (no borderline sample). LTX0004 gets a clonal GD from PGDD;
+LTX0103 a borderline clonal GD (genome fraction 0.53, quality 0.07) that the 0.3 cut-off rejects;
+LTX0104-Tumour2 is `qc_failed` (truncal CCF 86) and LTX0105 too (not FINALIZED in the mock QC
+table). The correction runs on all 11 (none changed). No PGDD settings warnings.
 
 ## Requirements
 

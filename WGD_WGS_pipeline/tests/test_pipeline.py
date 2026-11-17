@@ -105,7 +105,8 @@ def test_full_run_on_synthetic_store(tmp_path):
     calls = pl.read_csv(run / "wgd" / "05_table" / "wgd_calls_rejected_below_0.3.tsv", separator="\t",
                         null_values=["NA"])
     gds = {(t, c): n for t, c, n in calls.select("tumour_id", "clone", "number_of_gds_at_clone").iter_rows() if n}
-    assert gds == {("SYN0001-Tumour1", "clone1"): 1, ("SYN0002-Tumour1", "clone2"): 1}
+    # SYN0003 is single-clone and doubled: placed by ploidy on its only clone (2026-11-17)
+    assert gds == {("SYN0001-Tumour1", "clone1"): 1, ("SYN0002-Tumour1", "clone2"): 1, ("SYN0003-Tumour1", "clone1"): 1}
     assert (run / "wgd" / "07_report" / "report.html").exists()
     assert (run / "correction" / "alpaca_corrected.parquet").exists()
     assert tomllib.loads((run / "logs" / "config.used.toml").read_text())["wgd"]["quality_cutoff"] == 0.3
