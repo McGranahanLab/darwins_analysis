@@ -3,7 +3,8 @@
 Stages follow `docs/previous_analysis_logic.md` section 3:
 
   A  tumour QC (manual QC table + truncal CCF), optional
-  B  triage from GDs_per_tumour: no_gd, clonal_gd_only, alpaca_called (no mutation support), mut_supported
+  B  triage from GDs_per_tumour: no_gd, clonal_gd_only, alpaca_called (no mutation support), mut_supported;
+     single_clone for step 00's single-clone tumours (no PGDD run; placed by the ploidy fill)
   C  alpaca_called tumours: each subclonal event -> highest-ratio candidate clone (greedy, file order)
   E  2-cluster events whose clusters are a parent-child pair -> the child
   F  clonal events -> MRCA
@@ -438,7 +439,7 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                  summary: pl.DataFrame | None = None, alpaca_cn: pl.DataFrame | None = None,
                  qc_tumours: set[str] | None = None, score: str = "ratio_A",
                  ploidy_rule: str = "fill", regions: pl.DataFrame | None = None,
-                 params: P.Params | None = None) -> Placement:
+                 params: P.Params | None = None, single_clone: set[str] | None = None) -> Placement:
     """Run stages B–I and K1 on QC-passed tumours.
 
     `score`: ALPACA column used as a tie-breaker. `ploidy_rule`: `fill` (default,
@@ -460,6 +461,11 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
 
     events = events.with_columns(pl.col("clusters").map_elements(strip_clone, return_dtype=pl.Utf8))
     tri = triage(tumours, events)
+    # Single-clone tumours (step 00, no PGDD run): only a clonal GD is possible and ploidy is the only
+    # evidence, so they get no events and go through the fill on their one-clone tree (Piotr, 2026-11-17).
+    for t in single_clone or ():
+        if t in tri:
+            tri[t] = "single_clone"
     trees = {t: Tree.from_ratios(g) for (t,), g in ratios.group_by("tumour_id", maintain_order=True)}
     ratio_rows = {(r["tumour_id"], r["clone"]): r[score] for r in ratios.iter_rows(named=True)}
     cp = clone_proportions.with_columns(pl.col("sample_id").map_elements(sample_key, return_dtype=pl.Utf8).alias("key"))
@@ -619,8 +625,9 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
         targets_all = {}
         for t, sid, n in regions.select("tumour_id", "sample_id", "num_gds").iter_rows():
             targets_all.setdefault(t, {})[sample_key(sid)] = int(n)
-        template = {k: None for k in ev[0]} if ev else {}
-        for t in [t for t, c in tri.items() if c in ("alpaca_called", "mut_supported")]:
+        template = ({k: None for k in ev[0]} if ev else
+                    {k: None for k in [*events.columns, "placed_as", "alpaca_score", "placement_method", "flags"]})
+        for t in [t for t, c in tri.items() if c in ("alpaca_called", "mut_supported", "single_clone")]:
             tree = trees.get(t)
             te = [e for e in ev if e["tumour_id"] == t]
             ploidy_ev = [e for e in te if not e["is_clonal"] and e["placed_as"] is None]
@@ -1024,7 +1031,7 @@ def _tumour_quality(ev, tri, trees, cp_by_tumour, regions, summary, ratios, alpa
         if isinstance(f, Fill):
             n_pgdd = sum(e["placed_as"] == "superseded_by_fill" for e in te)
             # with the prior, a different count is the prior's doing and is already charged
-            if len(f.added) != n_pgdd and not prior:
+            if len(f.added) != n_pgdd and not prior and tri.get(t) != "single_clone":  # no PGDD events to compare
                 factors.append(("fill_count_differs", Q.FIXED["fill_count_differs"], f"{len(f.added)} vs {n_pgdd}"))
 
         ambiguous_clones: set[str] = set()

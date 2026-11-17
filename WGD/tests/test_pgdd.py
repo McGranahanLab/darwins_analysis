@@ -81,3 +81,16 @@ def test_check_settings(tables):
     assert set(diff) <= {"check_mut_cpn_2_threshold"}  # mock before tx_data#6 used the 1.5 fallback
     bad = {**tables, "settings": tables["settings"].with_columns(pl.lit(100).alias("n_boot"))}
     assert pgdd.check_settings(bad)["n_boot"] == {"expected": 500, "found": [100]}
+
+
+def test_check_settings_against_config_and_recorded(tables):
+    """Piotr, 2026-11-17: check the run against the pipeline's config; when the outputs carry no value
+    (empty mut_counts), use the settings the run was started with."""
+    cfg = dict(pgdd.EXPECTED_SETTINGS, n_boot=50)
+    assert pgdd.check_settings(tables, cfg)["n_boot"]["expected"] == 50
+    empty = {**tables, "mut_counts": tables["mut_counts"].clear()}
+    diff = pgdd.check_settings(empty)
+    assert "discover_mut_cpn_2_threshold" in diff                               # nothing found: warned
+    assert pgdd.check_settings(empty, recorded=dict(pgdd.EXPECTED_SETTINGS)) == {}
+    assert pgdd.check_settings(empty, recorded={**pgdd.EXPECTED_SETTINGS, "check_mut_cpn_2_threshold": 1.5}) == {
+        "check_mut_cpn_2_threshold": {"expected": 1.25, "found": [1.5]}}

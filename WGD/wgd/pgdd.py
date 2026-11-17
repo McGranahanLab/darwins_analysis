@@ -152,20 +152,37 @@ def summarise(pgdd: dict[str, pl.DataFrame]) -> dict[str, int]:
     }
 
 
-def check_settings(pgdd: dict[str, pl.DataFrame]) -> dict[str, dict]:
-    """Settings of this run that differ from EXPECTED_SETTINGS: {name: {"expected", "found"}}.
+def _same(a, b) -> bool:
+    """Setting values from TSV/JSON: numbers by value, booleans/strings case-insensitively."""
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return str(a).strip().lower() == str(b).strip().lower()
 
-    A setting absent from the outputs is reported with found = None.
+
+def check_settings(pgdd: dict[str, pl.DataFrame], expected: dict | None = None,
+                   recorded: dict | None = None) -> dict[str, dict]:
+    """Settings of this run that differ from `expected` (default EXPECTED_SETTINGS; a pipeline passes
+    its own config, Piotr 2026-11-17): {name: {"expected", "found"}}.
+
+    Values come from the outputs (mut_counts columns, bootstrap settings). When the outputs carry no
+    value (e.g. mut_counts is empty because no cluster was tested), `recorded` is used: the
+    settings the run was started with (`run.json` written by the WGD_WGS_pipeline PGDD wrapper).
+    A setting found nowhere is reported with found = None.
     """
+    expected = EXPECTED_SETTINGS if expected is None else expected
     found: dict[str, list] = {}
     for key in ("mut_counts", "settings"):
         df = pgdd[key]
-        for name in EXPECTED_SETTINGS:
-            if name in df.columns:
+        for name in expected:
+            if name in df.columns and df[name].drop_nulls().len():
                 found[name] = df[name].drop_nulls().unique().to_list()
+    for name, v in (recorded or {}).items():
+        if name in expected and name not in found:
+            found[name] = [v]
     diff = {}
-    for name, expected in EXPECTED_SETTINGS.items():
+    for name, want in expected.items():
         values = found.get(name)
-        if values != [expected]:
-            diff[name] = {"expected": expected, "found": values}
+        if not values or len(values) != 1 or not _same(values[0], want):
+            diff[name] = {"expected": want, "found": values}
     return diff
