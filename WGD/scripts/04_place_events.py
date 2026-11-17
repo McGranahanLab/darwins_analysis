@@ -40,6 +40,9 @@ def main() -> None:
     ap.add_argument("--tx-data-dir", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--summary", type=Path)
+    ap.add_argument("--single-clone", type=Path,
+                    help="single_clone_samples.tsv (step 00); default: <out>/00_pgdd_input/ if present. "
+                         "Single-clone tumours are placed by the ploidy fill on their one clone")
     ap.add_argument("--qc-table", type=Path)
     ap.add_argument("--release-dir", type=Path)
     ap.add_argument("--alpaca-score", choices=("ratio_A", "max_AB"), default="ratio_A")
@@ -62,6 +65,21 @@ def main() -> None:
         print(f"no summary at {summary_path}: H flag skipped")
 
     pgdd_tumours = pl.read_parquet(s01 / "pgdd_tumours.parquet")
+    regions = pl.read_parquet(s01 / "pgdd_regions.parquet")
+    sc_path = args.single_clone or args.out / "00_pgdd_input" / "single_clone_samples.tsv"
+    single = set()
+    if sc_path.exists():
+        sc = pl.read_csv(sc_path, separator="\t", null_values=["NA"], infer_schema_length=None)
+        single = set(sc["tumour_id"]) - set(pgdd_tumours["tumour_id"])
+        sc = sc.filter(pl.col("tumour_id").is_in(list(single)))
+        # PGDD-shaped rows: no events, targets = each sample's num_gds from step 00
+        pgdd_tumours = pl.concat([pgdd_tumours, pl.DataFrame({
+            "tumour_id": sorted(single), "First_GD": ["single_clone"] * len(single),
+            "num_subclonal_gds": [0] * len(single), "num_second_gd": [0] * len(single),
+            "num_clonal_gds": [0] * len(single)})], how="diagonal_relaxed")
+        regions = pl.concat([regions, sc.select("sample_id", "tumour_id", pl.col("num_gds").cast(regions["num_gds"].dtype))],
+                            how="diagonal_relaxed")
+        print(f"single-clone tumours (from {sc_path}): {len(single)}")
     qc = None
     if args.qc_table:
         qc_table = placement.qc_status(args.qc_table, args.release_dir, pgdd_tumours["tumour_id"])
@@ -74,14 +92,14 @@ def main() -> None:
 
     res = placement.place_events(
         events=pl.read_parquet(s01 / "pgdd_events.parquet"),
-        tumours=pgdd_tumours,
+        tumours=pgdd_tumours, single_clone=single,
         mut_counts=pl.read_parquet(s01 / "pgdd_mut_counts.parquet"),
         ratios=pl.read_parquet(tx / "alpaca_wgd_ratios.parquet"),
         clone_proportions=pl.read_parquet(tx / "clone_proportions.parquet"),
         summary=summary,
         alpaca_cn=pl.read_parquet(tx / "alpaca.parquet") if (tx / "alpaca.parquet").exists() else None,
         qc_tumours=qc, score=args.alpaca_score, ploidy_rule=args.ploidy_rule,
-        regions=pl.read_parquet(s01 / "pgdd_regions.parquet"), params=params)
+        regions=regions, params=params)
 
     out = args.out / "04_placed"
     out.mkdir(parents=True, exist_ok=True)

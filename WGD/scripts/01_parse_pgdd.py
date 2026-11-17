@@ -6,6 +6,9 @@ Usage:
 
 `--nemo-root` defaults to $TX_NEMO_ROOT. Locally, point it at tx_data's
 `nemo_mock/` (needs tx_data PR #5, branch darwin/pgdd-mock).
+`--expected-settings <json>`: PGDD settings to check the run against (WGD_WGS_pipeline passes its
+[pgdd.settings]); default `wgd.pgdd.EXPECTED_SETTINGS`. A `run.json` in the PGDD directory (written by
+the pipeline's PGDD wrapper) supplies values the outputs don't carry.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ def main() -> None:
     src.add_argument("--nemo-root", type=Path, default=os.environ.get("TX_NEMO_ROOT"))
     src.add_argument("--pgdd-dir", type=Path)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--expected-settings", type=Path, help="JSON of the PGDD settings the run should have used")
     args = ap.parse_args()
 
     if args.pgdd_dir is None and args.nemo_root is None:
@@ -47,7 +51,10 @@ def main() -> None:
     pgdd.region_clusters(tables["regions"]).write_parquet(out / "pgdd_region_clusters.parquet")
 
     summary = pgdd.summarise(tables)
-    settings_diff = pgdd.check_settings(tables)
+    expected = json.loads(args.expected_settings.read_text()) if args.expected_settings else None
+    rec_path = Path(directory) / "run.json"
+    recorded = json.loads(rec_path.read_text()).get("settings") if rec_path.exists() else None
+    settings_diff = pgdd.check_settings(tables, expected, recorded)
     run = {
         "pgdd_dir": str(directory),
         "settings": tables["settings"].to_dicts()[0],

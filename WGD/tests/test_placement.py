@@ -857,3 +857,35 @@ def test_no_alpaca_tree_row():
     assert tb.filter(pl.col("tumour_id") == T)["status"].null_count() == 0
     cmp = compare.compare(tb.filter(pl.col("tumour_id") == T), tb)
     assert cmp["summary"]["tumours_new_no_alpaca_tree"] == 1 and cmp["summary"]["tumours_only_new"] == []
+
+
+def _single_clone_run(gds: dict[str, int]):
+    """A one-clone tumour from step 00: no PGDD events, targets = each sample's num_gds."""
+    T2 = "LTX0950-Tumour1"
+    rt = pl.DataFrame({"tumour_id": [T2], "clone": ["clone1"], "parent": ["diploid"], "ratio_A": [2.0], "ratio_B": [1.9]})
+    cp = pl.DataFrame({"tumour_id": [T2] * len(gds), "clone": ["clone1"] * len(gds),
+                       "sample_id": [f"LTX0950_SU_T1-{s}--x" for s in gds], "proportion": [1.0] * len(gds)})
+    tu = pl.DataFrame({"tumour_id": [T2], "First_GD": ["single_clone"], "num_subclonal_gds": [0],
+                       "num_second_gd": [0], "num_clonal_gds": [0]})
+    reg = pl.DataFrame({"tumour_id": [T2] * len(gds), "sample_id": [f"LTX0950_SU_T1.{s}" for s in gds],
+                        "num_gds": list(gds.values())})
+    ev = events((True, False, None, ["R1"])).clear()
+    res = placement.place_events(ev, tu, mut_counts().clear(), rt, cp, ploidy_rule="fill", regions=reg,
+                                 single_clone={T2})
+    return res, final_table.build_table(res.events, res.tumours, tu, rt)
+
+
+def test_single_clone_tumours_placed_by_ploidy():
+    """Piotr, 2026-11-17: single-clone tumours can only have clonal GDs, called from ploidy."""
+    res, tb = _single_clone_run({"R1": 1, "R2": 1})
+    t = res.tumours.row(0, named=True)
+    assert t["triage"] == "single_clone" and t["status"] == "resolved"
+    assert tb.select("clone", "number_of_gds_at_clone", "class").rows() == [("clone1", 1, "clonal_wgd")]
+    assert "fill_count_differs" not in (t["quality_code"] or "")
+    res, tb = _single_clone_run({"R1": 2})
+    assert tb["number_of_gds_at_clone"].to_list() == [2] and res.tumours["status"].item() == "resolved"
+    res, tb = _single_clone_run({"R1": 0})
+    assert tb.select("number_of_gds_at_clone", "class").rows() == [(0, "no_wgd")]
+    # samples disagree: one clone can't be at 1 and 0 GDs at once -> unresolved, visible
+    res, tb = _single_clone_run({"R1": 1, "R2": 0})
+    assert res.tumours["status"].item() == "unresolved" and res.tumours["fill"].item().startswith("missing:")

@@ -20,7 +20,8 @@ when the tumour has no ALPACA tree). QC columns on every row (`with_qc`):
   `no_alpaca_tree` for QC-passed tumours without an ALPACA tree (one row, null clone, every
   WGD call null; Piotr, 2026-11-16).
 * class: no_gd -> no_wgd, clonal_gd_only -> clonal_wgd, alpaca_called -> ploidy_only,
-  mut_supported -> mut_supported.
+  mut_supported -> mut_supported; single_clone (no PGDD run, GDs from ploidy on the one clone)
+  -> clonal_wgd with any GD, else no_wgd.
 * sub_class (not in the notebook; rule from the tx_data wgd_calls definitions):
   for ploidy_only / mut_supported tumours with every event placed:
   `single subclonal GD`, `parallel only`, `sequential only` or `parallel + sequential`
@@ -198,7 +199,9 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
             rows.append({
                 "tumour_id": t, "clone": clone, "parent": parent,
                 "number_of_gds_at_clone": n_at[clone], "total_gds_per_tumour": sum(n_at.values()),
-                "quality": quality, "status": r["status"], "class": CLASS[r["triage"]],
+                "quality": quality, "status": r["status"],
+                "class": ((("clonal_wgd" if sum(n_at.values()) else "no_wgd") if r["triage"] == "single_clone"
+                           else CLASS[r["triage"]])),
                 "sub_class": sc, "quality_code": code,
                 "worst_event_quality": eq.get(clone, (None, None))[0],
                 "worst_event_quality_code": eq.get(clone, (None, None))[1],
