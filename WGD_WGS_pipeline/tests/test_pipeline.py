@@ -6,6 +6,7 @@ synthetic WGS store. Run with the WGD environment:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,7 @@ def config(tmp_path: Path, **override) -> Path:
     text = (HERE / "config.toml").read_text()
     text = text.replace('out_dir = "output/run"', f'out_dir = "{tmp_path / "run"}"')
     text = text.replace('dir = "../../tx_data/data"', f'dir = "{tmp_path / "tx"}"')
+    text = re.sub(r'manual_qc_table = ".*"', f'manual_qc_table = "{tmp_path / "tx" / "manual_qc.tsv"}"', text)
     for k, v in override.items():
         text = text.replace(k, v)
     p = tmp_path / "config.toml"
@@ -51,8 +53,12 @@ def test_check_lists_missing_tables(tmp_path):
     probs = wgs.check(wgs.load(config(tmp_path)))
     assert [p for p in probs if "missing" in p] == ["tx_data table missing: wgs_alpaca: steps 04, correction: "
                                                      "ALPACA clone CN per segment"]
-    on = config(tmp_path, **{"enabled = false": "enabled = true"})
-    assert any("wgs_manual_qc" in p for p in wgs.check(wgs.load(on)))
+    (tmp_path / "tx" / "wgs_conipher_cluster_info.parquet").unlink()
+    (tmp_path / "tx" / "manual_qc.tsv").unlink()
+    probs = wgs.check(wgs.load(config(tmp_path)))
+    assert any("wgs_conipher_cluster_info" in p for p in probs) and any("manual_qc_table" in p for p in probs)
+    off = config(tmp_path, **{"enabled = true ": "enabled = false"})
+    assert not any("cluster_info" in p or "manual_qc" in p for p in wgs.check(wgs.load(off)))
 
 
 def test_derived_calls_file_and_case_id(tmp_path):
@@ -71,6 +77,11 @@ def test_stage_layout(tmp_path):
     assert (c / "SYN0001_1.SCoutput.CLEAN.tsv").exists() and (c / "allTrees.txt").read_text().startswith("# tree 1\n1\t2")
     tt = pl.read_csv(c / "treeTable.tsv", separator="\t")
     assert tt.columns == ["mutation_id", "SAMPLE", "treeCLUSTER"]
+    sc = pl.read_csv(c / "SYN0001_1.SCoutput.CLEAN.tsv", separator="\t")
+    assert {"CASE_ID", "SAMPLE", "CHR", "POS", "CLUSTER", "MUT_COPY", "COPY_NUMBER_A", "mutation_id"} <= set(sc.columns)
+    ci = tmp_path / "run" / "inputs" / "qc" / "release" / "SYN0001" / "mutation_trees" / "tumour_1" / "clusterInfo.txt"
+    assert pl.read_csv(ci, separator="\t").columns == ["clusterID", "SAMPLE", "truncal", "treeClust", "meanCCF"]
+    assert (tmp_path / "run" / "inputs" / "qc" / "manual_qc.tsv").exists()
     seg = pl.read_csv(tmp_path / "run" / "inputs" / "msai" / "SYN0001_1" /
                       "SYN0001_1_copynumber_MSAI_adjusted_segments_tree_input.tsv", separator="\t")
     assert {"SAMPLE", "STARTPOS", "ENDPOS", "COPY_NUMBER_A", "COPY_NUMBER_B"} <= set(seg.columns)

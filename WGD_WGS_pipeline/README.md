@@ -37,17 +37,32 @@ the WGD caller's rules (same keys and defaults as `WGD/params.toml`; a test keep
 
 ## Inputs from tx_data
 
-| table | used by | in tx_data |
+| table | used by | source on Nemo |
 |---|---|---|
-| `wgs_consensus_segments` | step 00 (num_gds) | ✅ |
-| `wgs_clone_proportions` | steps 02, 04, correction | ✅ |
-| `wgs_conipher_mutations` | step 00 (SCoutput.CLEAN + treeTable, per mutation × sample) | ❌ to add |
-| `wgs_conipher_tree_edges` | step 00 (default tree) | ❌ to add |
-| `wgs_alpaca` | step 04, correction (clone CN per segment; WES `alpaca` columns) | ❌ to add |
-| `wgs_alpaca_wgd_ratios` | steps 02, 04, 05, correction (tree + ratios; WES `alpaca_wgd_ratios` columns) | ❌ to add |
-| `wgs_manual_qc`, `wgs_conipher_cluster_info` | step 04 QC, only with `[qc].enabled` | ❌ to add |
+| `wgs_consensus_segments` | step 00 (num_gds) | Battenberg `tree_input/` |
+| `wgs_clone_proportions` | steps 02, 04, correction | `wgs_resources/alpaca/input/<label>/cp_table.csv` |
+| `wgs_conipher_mutations` | step 00 (SCoutput.CLEAN + treeTable) | CONIPHER `2026_08_mean_max_absent/.../snv/<label>/` |
+| `wgs_conipher_tree_edges` | step 00 (default tree, `allTrees.txt`) | same |
+| `wgs_conipher_cluster_info` | step 04 CCF QC (`clusterInfo.txt`) | same |
+| `wgs_alpaca` | step 04, correction (`ALPACA_output_<label>.parquet`) | `wgs_resources/alpaca/output/tumour_results/<label>/` |
+| `wgs_alpaca_wgd_ratios` | steps 02, 04, 05, correction (`wgd_ratio_scores.parquet`) | same |
 
-Proposed schemas for the missing tables: `pipeline/wgs.py` (top).
+The last five came with tx_data PR #11 (2026-11-17). **Manual QC** is not a tx_data table: the WGS
+run reads the WES manual QC file (`[qc].manual_qc_table`; Piotr, 2026-11-17: every WGS tumour is in
+the WES cohort). tx_data's `nemo_mock/` has a minimal mock of it at the mirrored path.
+
+## Sandbox
+
+```bash
+cd ../../tx_data && pixi run build sandbox && cd -   # tx_data mock cohort, with tx_data #11
+./run.sh config.sandbox.toml                          # writes output/sandbox/
+```
+
+On the mock (2026-11-17): 11 tumours, 8 single-clone (set aside, see Known gaps); LTX0004 gets a clonal
+GD; LTX0103 a borderline clonal GD (genome fraction 0.53) that the 0.3 cut-off rejects;
+LTX0104-Tumour2 is `qc_failed` (truncal CCF 86 in the mock). Step 01 warns that the PGDD settings
+are missing because PGDD's `mut_counts` is empty when no cluster is tested; the settings used are
+in `pgdd/run.json`.
 
 ## Requirements
 
@@ -69,4 +84,6 @@ the last test runs the whole pipeline on it, PGDD included (skipped without pixi
   (`00_pgdd_input/single_clone_events.tsv`) and steps 04–05 don't read them back, so the correction
   skips them. This affects WES too, and matters more for WGS.
 - Step 01 checks the PGDD run against the settings hard-coded in `WGD/wgd/pgdd.py`, not against
-  `[pgdd.settings]`: changing a setting here gives a warning there.
+  `[pgdd.settings]`: changing a setting here gives a warning there (and every setting warns when
+  PGDD's `mut_counts` is empty).
+- TODO (tx_data): give the manual QC mock the real file's full column set.

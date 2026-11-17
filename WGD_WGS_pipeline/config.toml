@@ -40,8 +40,11 @@ alpaca_score = "max_AB"                # step 04 ALPACA tie-break score: max_AB 
 review_quality = 0.3                   # step 07: list tumours scoring below this
 
 [qc]
-enabled = false                        # upstream QC (manual QC table) + CCF QC (truncal meanCCF); needs the
-                                       # tx_data tables wgs_manual_qc and wgs_conipher_cluster_info
+enabled = true                         # upstream QC (manual QC table) + CCF QC (truncal meanCCF > 90, from
+                                       # tx_data wgs_conipher_cluster_info); failing tumours stay in the output
+# The WGS run uses the WES manual QC table (Piotr, 2026-11-17: every WGS tumour is in the WES cohort),
+# read from its file, not from tx_data. Sandbox: config.sandbox.toml points at the tx_data mock copy.
+manual_qc_table = "/nemo/project/proj-tracerx-lung/tracerx/_RELEASE/release_tx842/_aggregate/20250729_tx842_manual_qc_complete_post_refphase.tsv"
 
 [correction]
 min_quality = -1                       # correct only tumours whose call quality is >= this; -1 = all

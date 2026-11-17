@@ -26,7 +26,8 @@ def build(out: Path) -> Path:
         "SYN0003-Tumour1": dict(tree=[(1, 1)], samples={"R1": 1}, doubled={"R1": True},
                                 mut_copy={1: {"R1": 2}}),
     }
-    seg, mut, edges, cp, alp, rat = [], [], [], [], [], []
+    seg, mut, edges, cp, alp, rat, info = [], [], [], [], [], [], []
+    qc = ["patient\ttumour_id\tselected_solution\tFINALIZED"]
     for t, d in tumours.items():
         pat = t.split("-")[0]
         name = lambda s: f"{pat}_SU_T1.{s}"  # noqa: E731
@@ -37,7 +38,12 @@ def build(out: Path) -> Path:
                 seg.append({"tumour_id": t, "sample": name(s), "sample_name_hash": hashed(s), "chr": chrom,
                             "start": start + 1, "end": end, "cn_major": a, "cn_minor": a})
         for p, c in d["tree"]:
-            edges.append({"tumour_id": t, "parent": p, "child": c})
+            edges.append({"tumour_id": t, "parent_cluster": p, "child_cluster": c, "n_trees": 1})
+        for cl in sorted({x for e in d["tree"] for x in e}):
+            for s in d["samples"]:
+                info.append({"tumour_id": t, "cluster_id": cl, "sample": name(s), "truncal": cl == 1,
+                             "tree_clust": True, "mean_ccf": 99.0 if cl == 1 else 40.0})
+        qc.append(f"{pat}\t{t.split('Tumour')[1]}\tTRUE\tTRUE")
         clusters = sorted({x for e in d["tree"] for x in e})
         for cl in clusters:
             for i in range(30):
@@ -45,9 +51,9 @@ def build(out: Path) -> Path:
                 for s in d["samples"]:
                     mc = d["mut_copy"][cl][s]
                     a = 2.0 if d["doubled"][s] else 1.0
-                    mut.append({"tumour_id": t, "SAMPLE": name(s), "CHR": "1", "POS": cl * 1_000_000 + i * 1000,
-                                "REF": "C", "ALT": "T", "CLUSTER": cl, "MUT_COPY": float(mc), "COPY_NUMBER_A": a,
-                                "COPY_NUMBER_B": a, "PLOIDY": 4.0 if d["doubled"][s] else 2.0, "mutation_id": mid,
+                    mut.append({"tumour_id": t, "sample": name(s), "chr": "1", "pos": cl * 1_000_000 + i * 1000,
+                                "ref": "C", "alt": "T", "cluster": cl, "mut_copy": float(mc), "cn_a": a,
+                                "cn_b": a, "ploidy": 4.0 if d["doubled"][s] else 2.0, "mutation_id": mid,
                                 "tree_cluster": cl})
         for s, leaf in d["samples"].items():
             for cl in clusters:
@@ -71,6 +77,8 @@ def build(out: Path) -> Path:
     pl.DataFrame(cp).write_parquet(out / "wgs_clone_proportions.parquet")
     pl.DataFrame(alp).write_parquet(out / "wgs_alpaca.parquet")
     pl.DataFrame(rat).write_parquet(out / "wgs_alpaca_wgd_ratios.parquet")
+    pl.DataFrame(info).write_parquet(out / "wgs_conipher_cluster_info.parquet")
+    (out / "manual_qc.tsv").write_text("\n".join(qc) + "\n")
     return out
 
 
