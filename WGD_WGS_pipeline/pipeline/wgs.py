@@ -156,6 +156,15 @@ def stage(cfg: dict, run_dir: Path) -> dict:
     inp = run_dir / "inputs"
     seg, mut, edges = read("wgs_consensus_segments"), read("wgs_conipher_mutations"), read("wgs_conipher_tree_edges")
     tumours = sorted(set(mut["tumour_id"]))
+    if not tumours:
+        sel = cfg["run"].get("tumours") or []
+        counts = {t: pl.read_parquet(tx / f"{t}.parquet").height for t in TABLES}
+        raise SystemExit(
+            f"no tumours to stage: wgs_conipher_mutations in {tx} has no rows"
+            + (f" for [run].tumours {sel}" if sel else "") + ".\n  rows per table: "
+            + ", ".join(f"{t}={n}" for t, n in counts.items())
+            + "\n  If it is empty, check the tx_data build log for 'wgs_conipher_mutations: read N/M WGS tumours'"
+              " and 'no file for ... tumour(s)' (CONIPHER root conipher_wgs in catalog/_sources.yml).")
     no_seg = sorted(set(tumours) - set(seg["tumour_id"]))
     if no_seg:
         raise SystemExit(f"tumours with CONIPHER mutations but no CN segments: {no_seg[:10]}")

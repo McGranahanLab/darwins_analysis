@@ -110,3 +110,12 @@ def test_full_run_on_synthetic_store(tmp_path):
     assert (run / "wgd" / "07_report" / "report.html").exists()
     assert (run / "correction" / "alpaca_corrected.parquet").exists()
     assert tomllib.loads((run / "logs" / "config.used.toml").read_text())["wgd"]["quality_cutoff"] == 0.3
+
+
+def test_stage_stops_when_no_tumours(tmp_path):
+    """2026-11-18 (Piotr's run): an empty wgs_conipher_mutations must stop `stage`, not step 00."""
+    make_fixture.build(tmp_path / "tx")
+    m = pl.read_parquet(tmp_path / "tx" / "wgs_conipher_mutations.parquet")
+    m.clear().write_parquet(tmp_path / "tx" / "wgs_conipher_mutations.parquet")
+    with pytest.raises(SystemExit, match="no tumours to stage"):
+        wgs.stage(wgs.load(config(tmp_path)), tmp_path / "run")
