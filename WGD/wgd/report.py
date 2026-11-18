@@ -62,6 +62,14 @@ def _factors(tumour_factors: str | None, event_factors: list[str | None]) -> dic
     return worst
 
 
+TUMOUR_TABLE_SCHEMA = {
+    "tumour_id": pl.Utf8, "pattern": pl.Utf8, "evidence_class": pl.Utf8, "status": pl.Utf8, "quality": pl.Float64,
+    "quality_code": pl.Utf8, "main_penalty": pl.Utf8, "main_penalty_value": pl.Float64, "n_gds": pl.Int64,
+    "clonal_gds": pl.Int64, "subclonal_gds": pl.Int64, "parallel_lineages": pl.Int64, "max_gds_on_path": pl.Int64,
+    "gd_clones": pl.Utf8, "n_samples": pl.Int64, "ploidy_prior": pl.Utf8, "forced_gds": pl.Int64,
+    "minor_clone_gds": pl.Int64, "alpaca_parent": pl.Boolean, "factors_json": pl.Utf8}
+
+
 def tumour_table(tumours: pl.DataFrame, calls: pl.DataFrame, events: pl.DataFrame,
                  summary: pl.DataFrame | None = None) -> pl.DataFrame:
     """One row per tumour: pattern, GD counts, quality, main penalty, flags."""
@@ -112,6 +120,8 @@ def tumour_table(tumours: pl.DataFrame, calls: pl.DataFrame, events: pl.DataFram
             "alpaca_parent": flags.count("alpaca_parent(") > 0,
             "factors_json": json.dumps({k: [round(v[0], 3), v[1]] for k, v in sorted(factors.items())}),
         })
+    if not rows:  # every tumour without calls (qc_failed / no_alpaca_tree): keep the columns (2026-11-18)
+        return pl.DataFrame(schema=TUMOUR_TABLE_SCHEMA)
     return pl.DataFrame(rows, infer_schema_length=None).sort("tumour_id")
 
 
