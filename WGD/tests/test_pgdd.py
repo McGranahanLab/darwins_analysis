@@ -94,3 +94,13 @@ def test_check_settings_against_config_and_recorded(tables):
     assert pgdd.check_settings(empty, recorded=dict(pgdd.EXPECTED_SETTINGS)) == {}
     assert pgdd.check_settings(empty, recorded={**pgdd.EXPECTED_SETTINGS, "check_mut_cpn_2_threshold": 1.5}) == {
         "check_mut_cpn_2_threshold": {"expected": 1.25, "found": [1.5]}}
+
+
+def test_header_only_tables_are_typed(tmp_path):
+    """2026-11-18: a run where no sample has a GD gives header-only PGDD tables; their flags must read
+    as booleans so step 01's filters work."""
+    (tmp_path / "pgdd_GD_events.tsv").write_text("GD_event\tGD_event_id\ttumour_id\tis_clonal\tnum_regions_gd_event\t"
+                                               "total_regions\tis_subclonal_mutation_supported\tclusters\tsamples\n")
+    df = pgdd._read_tsv(tmp_path / "pgdd_GD_events.tsv")
+    assert df.height == 0 and df.schema["is_clonal"] == pl.Boolean and df.schema["tumour_id"] == pl.Utf8
+    assert df.schema["total_regions"] == pl.Int64

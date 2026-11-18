@@ -435,6 +435,13 @@ class Placement:
     log: list[str] = field(default_factory=list)
 
 
+# Columns step 04 adds to PGDD's event rows (events_placed.tsv), for a run with no events at all.
+EVENT_EXTRA_COLUMNS = {"placed_as": pl.Utf8, "alpaca_score": pl.Float64, "placement_method": pl.Utf8,
+                       "supporting_mut_count": pl.Int64, "placed_clone": pl.Utf8, "fill_alternatives": pl.Utf8,
+                       "event_quality": pl.Float64, "event_quality_code": pl.Utf8, "event_factors": pl.Utf8,
+                       "flags": pl.Utf8}
+
+
 def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.DataFrame,
                  ratios: pl.DataFrame, clone_proportions: pl.DataFrame,
                  summary: pl.DataFrame | None = None, alpaca_cn: pl.DataFrame | None = None,
@@ -779,8 +786,11 @@ def place_events(events: pl.DataFrame, tumours: pl.DataFrame, mut_counts: pl.Dat
                      "solution_strict": (prior_info.get(t) or {}).get("strict"),
                      "solution_prior": (prior_info.get(t) or {}).get("prior")})
 
-    ev_df = pl.DataFrame([{**{k: v for k, v in e.items() if k != "flags"}, "flags": ";".join(e["flags"]) or None}
-                          for e in ev], infer_schema_length=None)
+    if ev:
+        ev_df = pl.DataFrame([{**{k: v for k, v in e.items() if k != "flags"}, "flags": ";".join(e["flags"]) or None}
+                              for e in ev], infer_schema_length=None)
+    else:  # no GD event in the whole run (e.g. only tumours without GDs): keep the columns (2026-11-18)
+        ev_df = pl.DataFrame(schema={**dict(events.schema), **EVENT_EXTRA_COLUMNS})
     tumour_schema = {"tumour_id": pl.Utf8, "triage": pl.Utf8, "status": pl.Utf8, "has_alpaca_tree": pl.Boolean,
                      "n_events": pl.Int64, "n_unplaced": pl.Int64, "fill": pl.Utf8, "H_mismatch": pl.Boolean,
                      "H_summary_max_gds": pl.Int64, "H_tree_path_max_gds": pl.Int64,

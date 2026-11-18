@@ -889,3 +889,21 @@ def test_single_clone_tumours_placed_by_ploidy():
     # samples disagree: one clone can't be at 1 and 0 GDs at once -> unresolved, visible
     res, tb = _single_clone_run({"R1": 1, "R2": 0})
     assert res.tumours["status"].item() == "unresolved" and res.tumours["fill"].item().startswith("missing:")
+
+
+def test_run_without_any_gd_event_writes_columns(tmp_path):
+    """2026-11-18 (Piotr's two-tumour run): no GD anywhere -> events_placed.tsv must keep its header,
+    and step 05 must read it back."""
+    res, _ = _single_clone_run({"R1": 0})
+    assert res.events.height == 0 and {"placed_clone", "event_quality", "flags"} <= set(res.events.columns)
+    p = tmp_path / "events_placed.tsv"
+    res.events.write_csv(p, separator="\t", null_value="NA")
+    back = pl.read_csv(p, separator="\t", null_values=["NA"], infer_schema_length=None)
+    assert back.height == 0
+    rt = pl.DataFrame({"tumour_id": ["LTX0950-Tumour1"], "clone": ["clone1"], "parent": ["diploid"],
+                       "ratio_A": [1.0], "ratio_B": [1.0]})
+    tu = pl.DataFrame({"tumour_id": ["LTX0950-Tumour1"], "num_clonal_gds": [0]})
+    tb = final_table.build_table(back, res.tumours, tu, rt)
+    assert tb.select("number_of_gds_at_clone", "class").rows() == [(0, "no_wgd")]
+    ev = final_table.build_events(back, res.tumours, tu, rt)
+    assert ev.height == 0 and "wgd_event_id" in ev.columns
