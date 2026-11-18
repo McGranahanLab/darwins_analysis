@@ -75,11 +75,25 @@ def pgdd_dir(nemo_root: Path) -> Path:
     return Path(nemo_root) / PGDD_NEMO_DIR.relative_to("/nemo")
 
 
+def _empty_type(col: str) -> pl.DataType:
+    """Column type for an empty PGDD table: flags are booleans, counts integers, the rest numbers/text."""
+    if col.startswith(("is_", "keep_", "First_GD_homogen", "Second_GD_homogen", "GD_status_homogen",
+                       "stability_use_binom_test", "check_phase_requires")) or col.endswith(("_pass", "_pass_all")):
+        return pl.Boolean
+    if col.startswith(("num_", "n_boot", "seed", "total_regions")) or col in ("k", "B"):
+        return pl.Int64
+    if col in ("stability_adjust_method", "bootstrap_unit", "phase"):
+        return pl.Utf8
+    return pl.Float64
+
+
 def _read_tsv(path: Path) -> pl.DataFrame:
     header = path.open().readline().rstrip("\n").split("\t")
     overrides = {c: pl.Utf8 for c in header if c in STRING_COLS}
     df = pl.read_csv(path, separator="\t", schema_overrides=overrides,
                      null_values=["NA"], infer_schema_length=None)
+    if df.height == 0:  # header-only table (no GD in the run): types can't be inferred, so set them
+        df = df.with_columns([pl.col(c).cast(_empty_type(c)) for c in df.columns if c not in STRING_COLS])
     # fwrite writes empty strings as "" -> normalise empty to null
     return df.with_columns(
         [pl.when(pl.col(c).str.len_chars() == 0).then(None).otherwise(pl.col(c)).alias(c)

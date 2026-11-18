@@ -97,3 +97,26 @@ def test_no_calls_section(cohort, tmp_path):
     assert "Tumours without WGD calls" in html and "LTX9999-Tumour1" in html and "LTX9998-Tumour1" in html
     assert (tmp_path / "07_report" / "no_calls.tsv").exists()
     assert not {"LTX9998-Tumour1", "LTX9999-Tumour1"} & set(res["tumours"]["tumour_id"])
+
+
+def test_report_when_no_tumour_has_calls(tmp_path):
+    """2026-11-18 (Piotr's run): every tumour qc_failed -> the report still runs and lists them."""
+    s04, s05 = tmp_path / "04", tmp_path / "05"
+    s04.mkdir()
+    s05.mkdir()
+    pl.DataFrame(schema={"tumour_id": pl.Utf8, "triage": pl.Utf8, "status": pl.Utf8, "quality": pl.Float64,
+                         "quality_code": pl.Utf8, "ploidy_prior": pl.Utf8, "tumour_factors": pl.Utf8}).write_csv(
+        s04 / "tumours_placed.tsv", separator="\t")
+    pl.DataFrame(schema={"GD_event": pl.Utf8, "tumour_id": pl.Utf8, "flags": pl.Utf8}).write_csv(
+        s04 / "events_placed.tsv", separator="\t")
+    pl.DataFrame({"tumour_id": ["LTX9999-Tumour1"], "clone": ["clone1"], "parent": ["diploid"],
+                  "number_of_gds_at_clone": [None], "status": ["qc_failed"], "class": [None], "upstream_qc": ["fail"],
+                  "ccf_qc": ["pass"], "truncal_min_ccf": [99.0], "qc_pass": [False],
+                  "qc_reason": ["upstream: not FINALIZED"]},
+                 schema_overrides={"number_of_gds_at_clone": pl.Int64, "class": pl.Utf8}).write_csv(
+        s05 / "wgd_calls.tsv", separator="\t", null_value="NA")
+    pl.DataFrame(schema={"wgd_event_id": pl.Utf8, "tumour_id": pl.Utf8, "clone": pl.Utf8, "source": pl.Utf8,
+                         "flags": pl.Utf8, "event_factors": pl.Utf8}).write_csv(s05 / "wgd_events.tsv", separator="\t")
+    res = report.run(tmp_path / "07", s04, s05)
+    assert res["tumours"].height == 0 and res["no_calls"]["tumour_id"].to_list() == ["LTX9999-Tumour1"]
+    assert "LTX9999-Tumour1" in res["report"].read_text()
