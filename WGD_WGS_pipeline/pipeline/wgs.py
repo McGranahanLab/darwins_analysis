@@ -92,8 +92,15 @@ def check(cfg: dict) -> list[str]:
     if not problems:
         if not path(cfg, cfg["tx_data"]["dir"]).is_dir():
             problems.append(f"tx_data.dir not found: {path(cfg, cfg['tx_data']['dir'])}")
-        if not (path(cfg, cfg["pgdd"]["src"]) / "R" / "parrallel_gd_caller.R").exists():
+        caller = path(cfg, cfg["pgdd"]["src"]) / "R" / "parrallel_gd_caller.R"
+        if not caller.exists():
             problems.append(f"pgdd.src has no R/parrallel_gd_caller.R: {path(cfg, cfg['pgdd']['src'])}")
+        else:  # an older PGDD (e.g. the wlippa fork before bootstrap) rejects the settings at run time
+            src = caller.read_text()
+            old = [k for k in cfg["pgdd"].get("settings", {}) if k not in src]
+            if old:
+                problems.append(f"pgdd.src {caller.parent.parent} does not know settings {old}: use "
+                                "amf71/ParallelGDDetect at cb0437b or later (bootstrap/stability arguments)")
         problems += [f"tx_data table missing: {m}" for m in missing_tables(cfg)]
         if cfg.get("qc", {}).get("enabled"):
             q = cfg["qc"].get("manual_qc_table")

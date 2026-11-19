@@ -26,8 +26,18 @@ import wgs  # noqa: E402
 from wgd import params as P  # noqa: E402
 
 
+PGDD_SRC = os.environ.get("PGDD_SRC", str(Path("~/scratch/PGDD_amf71").expanduser()))
+# The synthetic store has 30 mutations per cluster, far below the WGS thresholds in config.toml
+# (Piotr, 2026-11-19: 100 / 50 / 30), so the tests use the WES-scale ones; the pipeline is the same.
+FIXTURE_PGDD = {"discover_num_muts_threshold": 10, "discover_num_2_cpn_muts_threshold": 5,
+                "check_num_2_cpn_muts_threshold": 3}
+
+
 def config(tmp_path: Path, **override) -> Path:
     text = (HERE / "config.toml").read_text()
+    text = re.sub(r'(?m)^src = ".*?"', f'src = "{PGDD_SRC}"', text)
+    for k, v in FIXTURE_PGDD.items():
+        text = re.sub(rf"(?m)^{k} = \S+", f"{k} = {v}", text)
     text = text.replace('out_dir = "output/run"', f'out_dir = "{tmp_path / "run"}"')
     text = text.replace('dir = "../../tx_data/data"', f'dir = "{tmp_path / "tx"}"')
     text = re.sub(r'manual_qc_table = ".*"', f'manual_qc_table = "{tmp_path / "tx" / "manual_qc.tsv"}"', text)
@@ -36,6 +46,16 @@ def config(tmp_path: Path, **override) -> Path:
     p = tmp_path / "config.toml"
     p.write_text(text)
     return p
+
+
+def test_old_pgdd_checkout_is_caught(tmp_path):
+    make_fixture.build(tmp_path / "tx")
+    old = tmp_path / "pgdd_old" / "R"
+    old.mkdir(parents=True)
+    (old / "parrallel_gd_caller.R").write_text("detect_par_gd <- function(input, mut_cpn_2_threshold = 1.5) {}\n")
+    cfg = config(tmp_path)
+    cfg.write_text(re.sub(r'(?m)^src = ".*?"', f'src = "{old.parent}"', cfg.read_text()))
+    assert any("does not know settings" in p for p in wgs.check(wgs.load(cfg)))
 
 
 def test_wgd_params_match_wgd_defaults(tmp_path):

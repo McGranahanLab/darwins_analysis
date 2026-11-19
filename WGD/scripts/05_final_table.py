@@ -8,7 +8,7 @@ Reads `<out>/04_placed/`, `<out>/01_pgdd/pgdd_tumours.parquet` and tx_data
   modified_tumours.tsv   one row per departure from the plain rules (ploidy prior, forced GDs),
                    with the strict and final solutions, for manual review
   wgd_events.tsv   one row per GD (unique wgd_event_id), with quality, factors and `rejected`
-  wgd_calls.tsv    one row per ALPACA clone, all GDs; QC-failed tumours included with
+  wgd_calls.tsv    one row per ALPACA clone, all GDs; quality_pass = no GD on the clone below --reject-below; QC-failed tumours included with
                    status qc_failed and NA calls, QC columns on every row (from 04_placed/tumour_qc.tsv)
   wgd_calls_rejected_below_<Q>.tsv   with --reject-below Q: GDs with event_quality < Q dropped,
                    per-clone and per-tumour scores recalculated; mutation-supported GDs are kept
@@ -53,6 +53,7 @@ def main() -> None:
     table = final_table.build_table(events, tumours, pgdd_t, ratios,
                                     event_table=ev_table.with_columns(pl.lit(False).alias("rejected")))
     mods = final_table.modifications(tumours, events, table)
+    table = final_table.with_quality_pass(table, ev_table, args.reject_below)
     table = final_table.with_qc(table, qc, ratios)
     out = args.out / "05_table"
     out.mkdir(parents=True, exist_ok=True)
@@ -67,6 +68,7 @@ def main() -> None:
     if args.reject_below is not None:
         filt = final_table.build_table(events, tumours, pgdd_t, ratios, reject_below=args.reject_below,
                                        event_table=ev_table)
+        filt = final_table.with_quality_pass(filt, ev_table.filter(~pl.col("rejected")), args.reject_below)
         filt = final_table.with_qc(filt, qc, ratios)
         name = f"wgd_calls_rejected_below_{args.reject_below:g}.tsv"
         filt.write_csv(out / name, separator="\t", null_value="NA")

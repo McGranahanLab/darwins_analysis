@@ -822,7 +822,8 @@ def test_qc_failed_tumours_in_table_with_null_calls(tmp_path):
     out = final_table.with_qc(base, qc, rt)
     assert out.columns == list(final_table.OUTPUT_COLUMNS)
     passed = out.filter(pl.col("tumour_id") == T)
-    assert passed.drop(*final_table.QC_FIELDS).equals(base.select(passed.drop(*final_table.QC_FIELDS).columns))
+    rest = passed.drop(*final_table.QC_FIELDS, "quality_pass")
+    assert rest.equals(base.select(rest.columns))
     assert passed["qc_pass"].all() and set(passed["status"]) != {"qc_failed"}
     f2 = out.filter(pl.col("tumour_id") == T2)
     assert f2.height == len(PARENT) and set(f2["status"]) == {"qc_failed"} and f2["parent"].null_count() == 0
@@ -907,3 +908,19 @@ def test_run_without_any_gd_event_writes_columns(tmp_path):
     assert tb.select("number_of_gds_at_clone", "class").rows() == [(0, "no_wgd")]
     ev = final_table.build_events(back, res.tumours, tu, rt)
     assert ev.height == 0 and "wgd_event_id" in ev.columns
+
+
+def test_quality_pass_follows_the_cutoff():
+    """Piotr, 2026-11-19: all calls stay in wgd_calls.tsv; quality_pass says which pass the cut-off."""
+    res = run(events((True, False, None, ["R1", "R2", "R3"]), (False, False, None, ["R1", "R2"])),
+              tumour("Clonal", 1, n_clonal=1), ploidy_rule="fill", regions=regions_df(T, {"R1": 2, "R2": 2, "R3": 1}))
+    tu = tumour("Clonal", 1, n_clonal=1)
+    ev = final_table.build_events(res.events, res.tumours, tu, ratios(), reject_below=0.99)
+    tb = final_table.build_table(res.events, res.tumours, tu, ratios(), event_table=ev.with_columns(pl.lit(False).alias("rejected")))
+    rejected = set(ev.filter("rejected")["clone"])
+    assert rejected                                                       # the fill GD scores below 0.99
+    out = final_table.with_quality_pass(tb, ev, 0.99)
+    qp = dict(zip(out["clone"], out["quality_pass"]))
+    assert all(qp[c] is False for c in rejected) and all(qp[c] is True for c in qp if c not in rejected)
+    assert out["number_of_gds_at_clone"].sum() == tb["number_of_gds_at_clone"].sum()     # all calls kept
+    assert final_table.with_quality_pass(tb, ev, None)["quality_pass"].null_count() == tb.height
