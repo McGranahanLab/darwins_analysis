@@ -13,12 +13,12 @@ tumours = []                           # only these tumour ids (e.g. ["LTX0001-T
 [tx_data]
 dir = "../../tx_data/data"             # built tx_data store (data/*.parquet); on Nemo: a prod build
 
-[tx_data.tables]                       # pipeline input -> tx_data table (WES tables)
-segments = "msai_segments"             # NOT IN tx_data YET: WES MSAI-adjusted segments (WGD/TODO.md)
+[tx_data.tables]                       # pipeline input -> tx_data table (WES tables; CONIPHER + segments: tx_data#14)
+segments = "msai_segments"
 clone_proportions = "clone_proportions"
-conipher_mutations = "conipher_mutations"      # NOT IN tx_data YET: WES SCoutput.CLEAN + treeTable
-conipher_tree_edges = "conipher_tree_edges"    # NOT IN tx_data YET: WES allTrees.txt default tree
-conipher_cluster_info = "conipher_cluster_info"   # NOT IN tx_data YET: WES clusterInfo (CCF QC, [qc].enabled)
+conipher_mutations = "conipher_mutations"
+conipher_tree_edges = "conipher_tree_edges"
+conipher_cluster_info = "conipher_cluster_info"
 alpaca = "alpaca"
 alpaca_wgd_ratios = "alpaca_wgd_ratios"
 

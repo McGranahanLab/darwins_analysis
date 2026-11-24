@@ -8,6 +8,7 @@ one config file per cohort (2026-11-24; until then `WGD_WGS_pipeline/`, WGS only
 | `config.wgs.toml` | WGS | 100 / 50 / 30 (Piotr, 2026-11-19) | `wgs_*` |
 | `config.wes.toml` | WES (tx842) | 10 / 5 / 3 (Piotr, 2026-11-09; = `wgd.pgdd.EXPECTED_SETTINGS`) | unprefixed (`alpaca`, …) |
 | `config.wgs.sandbox.toml` | WGS, tx_data mock | as WGS | `wgs_*` |
+| `config.wes.sandbox.toml` | WES, tx_data mock (9 tumours with every input) | as WES | unprefixed |
 
 Inputs come from the tx_data store; the WGD caller and the correction are the code in [`../WGD`](../WGD/)
 and [`../alpaca_post_hoc_correction`](../alpaca_post_hoc_correction/), called as they are. The steps don't
@@ -55,11 +56,11 @@ the WGD caller's rules (same keys and defaults as `WGD/params.toml`; a test keep
 
 | input (`[tx_data.tables]` key) | used by | WGS table (source on Nemo) | WES table |
 |---|---|---|---|
-| `segments` | step 00 (num_gds) | `wgs_consensus_segments` (Battenberg `tree_input/`) | `msai_segments` — **not in tx_data yet** |
+| `segments` | step 00 (num_gds) | `wgs_consensus_segments` (Battenberg `tree_input/`) | `msai_segments` (tx_data#14, from the ALPACA input) |
 | `clone_proportions` | steps 02, 04, correction | `wgs_clone_proportions` (`wgs_resources/alpaca/input/<label>/cp_table.csv`) | `clone_proportions` |
-| `conipher_mutations` | step 00 (SCoutput.CLEAN + treeTable) | `wgs_conipher_mutations` (CONIPHER `2026_08_mean_max_absent/.../snv/<label>/`) | `conipher_mutations` — **not in tx_data yet** |
-| `conipher_tree_edges` | step 00 (default tree, `allTrees.txt`) | `wgs_conipher_tree_edges` (same) | `conipher_tree_edges` — **not in tx_data yet** |
-| `conipher_cluster_info` | step 04 CCF QC (`clusterInfo.txt`) | `wgs_conipher_cluster_info` (same) | `conipher_cluster_info` — **not in tx_data yet** |
+| `conipher_mutations` | step 00 (SCoutput.CLEAN + treeTable) | `wgs_conipher_mutations` (CONIPHER `2026_08_mean_max_absent/.../snv/<label>/`) | `conipher_mutations` (tx_data#14) |
+| `conipher_tree_edges` | step 00 (default tree, `allTrees.txt`) | `wgs_conipher_tree_edges` (same) | `conipher_tree_edges` (tx_data#14) |
+| `conipher_cluster_info` | step 04 CCF QC (`clusterInfo.txt`) | `wgs_conipher_cluster_info` (same) | `conipher_cluster_info` (tx_data#14) |
 | `alpaca` | step 04, correction | `wgs_alpaca` (`wgs_resources/alpaca/output/tumour_results/<label>/`) | `alpaca` |
 | `alpaca_wgd_ratios` | steps 02, 04, 05, correction | `wgs_alpaca_wgd_ratios` (same) | `alpaca_wgd_ratios` |
 
@@ -70,9 +71,8 @@ then Refphase; Refphase detects MSAI itself, so its output is already MSAI-corre
 WGS runs Battenberg, which does no MSAI detection, so a post-hoc MSAI correction produces the
 `*_MSAI_adjusted_*segments_tree_input.tsv` files. The table name `msai_segments` is kept for WES for symmetry.
 
-The WGS tables came with tx_data PR #11 (2026-11-17). **WES:** the four tables marked "not in tx_data yet" must be
-added to tx_data with the same columns as their `wgs_` counterparts before `config.wes.toml` can run (`check`
-lists them until then; see `../WGD/TODO.md`, Inputs). **Manual QC** is not a tx_data table: both configs read
+The WGS tables came with tx_data PR #11 (2026-11-17). **WES:** the four CONIPHER / segment tables come with tx_data#14
+(2026-11-24), same columns as their `wgs_` counterparts. **Manual QC** is not a tx_data table: both configs read
 the WES manual QC file (`[qc].manual_qc_table`; Piotr, 2026-11-17: every WGS tumour is in the WES cohort).
 tx_data's `nemo_mock/` has a minimal mock of it at the mirrored path.
 
@@ -81,6 +81,7 @@ tx_data's `nemo_mock/` has a minimal mock of it at the mirrored path.
 ```bash
 cd ../../tx_data && pixi run build sandbox && cd -   # tx_data mock cohort, with tx_data #11
 ./run.sh config.wgs.sandbox.toml                      # writes output/wgs_sandbox/
+./run.sh config.wes.sandbox.toml                      # writes output/wes_sandbox/ (needs tx_data#14)
 ```
 
 On the mock (2026-11-17, with the single-clone change): all 11 tumours reach `wgd_calls.tsv`. The
@@ -115,7 +116,7 @@ can't be reconciled leave the tumour `unresolved`.
 
 ## Known gaps / TODO
 
-- WES run blocked on the four WES tx_data tables above.
+- Missing inputs stop the run (Piotr, 2026-11-24): a tumour with CONIPHER mutations but no segments stops `stage`; there is deliberately no skip option.
 - TODO (tx_data): give the manual QC mock the real file's full column set.
 - `check` stops when `[pgdd].src` is a PGDD without the bootstrap/stability arguments (e.g. the wlippa
   fork at 1af16a8); use amf71/ParallelGDDetect at cb0437b or later.

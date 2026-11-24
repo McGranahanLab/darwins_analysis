@@ -198,7 +198,8 @@ def stage(cfg: dict, run_dir: Path) -> dict:
               " tumours' and 'no file for ... tumour(s)' (the CONIPHER root in catalog/_sources.yml).")
     no_seg = sorted(set(tumours) - set(seg["tumour_id"]))
     if no_seg:
-        raise SystemExit(f"tumours with CONIPHER mutations but no CN segments: {no_seg[:10]}")
+        raise SystemExit(f"{len(no_seg)} tumour(s) with CONIPHER mutations ({table(cfg, 'conipher_mutations')}) but no "
+                         f"CN segments ({table(cfg, 'segments')}); every tumour needs every input: {no_seg}")
     for t in tumours:
         case = case_id(t)
         cdir, mdir = inp / "conipher" / case, inp / "msai" / case
