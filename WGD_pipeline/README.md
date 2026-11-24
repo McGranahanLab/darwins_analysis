@@ -63,6 +63,13 @@ the WGD caller's rules (same keys and defaults as `WGD/params.toml`; a test keep
 | `alpaca` | step 04, correction | `wgs_alpaca` (`wgs_resources/alpaca/output/tumour_results/<label>/`) | `alpaca` |
 | `alpaca_wgd_ratios` | steps 02, 04, 05, correction | `wgs_alpaca_wgd_ratios` (same) | `alpaca_wgd_ratios` |
 
+**Why `segments` comes from different places (Piotr, 2026-11-24).** Both cohorts need fractional allele-specific
+CN per segment per sample, MSAI-corrected, from the same solution that feeds CONIPHER and ALPACA. WES runs ASCAT,
+then Refphase; Refphase detects MSAI itself, so its output is already MSAI-corrected and there are no separate
+`MSAI_adjusted` files. The WES `segments` therefore come from the ALPACA input (same Refphase solution as CONIPHER).
+WGS runs Battenberg, which does no MSAI detection, so a post-hoc MSAI correction produces the
+`*_MSAI_adjusted_*segments_tree_input.tsv` files. The table name `msai_segments` is kept for WES for symmetry.
+
 The WGS tables came with tx_data PR #11 (2026-11-17). **WES:** the four tables marked "not in tx_data yet" must be
 added to tx_data with the same columns as their `wgs_` counterparts before `config.wes.toml` can run (`check`
 lists them until then; see `../WGD/TODO.md`, Inputs). **Manual QC** is not a tx_data table: both configs read
