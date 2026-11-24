@@ -1,9 +1,11 @@
-"""Helper for run.sh: read config.toml and stage tx_data WGS tables into the layouts the steps read.
+"""Helper for run.sh: read a config (config.wgs.toml / config.wes.toml) and stage the cohort's tx_data tables
+into the layouts the steps read. The steps don't know the cohort: [tx_data.tables] says which tx_data table
+feeds each input (WGS: wgs_*; WES: the unprefixed tables).
 
-  python wgs.py check  <config>            validate the config; list missing tx_data tables (exit 1 if any)
-  python wgs.py get    <config> <key>      print one value (dotted key; paths resolved; lists space-joined)
-  python wgs.py write  <config> <run_dir>  write pgdd_settings.json and wgd_params.toml into <run_dir>/config/
-  python wgs.py stage  <config> <run_dir>  tx_data (+ the manual QC file) -> <run_dir>/inputs/{conipher,msai,tx_data,qc}
+  python prep.py check  <config>            validate the config; list missing tx_data tables (exit 1 if any)
+  python prep.py get    <config> <key>      print one value (dotted key; paths resolved; lists space-joined)
+  python prep.py write  <config> <run_dir>  write pgdd_settings.json and wgd_params.toml into <run_dir>/config/
+  python prep.py stage  <config> <run_dir>  tx_data (+ the manual QC file) -> <run_dir>/inputs/{conipher,msai,tx_data,qc}
 
 Staged layout (what each step expects):
   inputs/conipher/<CASE>/<CASE>.SCoutput.CLEAN.tsv, treeTable.tsv, allTrees.txt   step 00
@@ -23,20 +25,21 @@ from pathlib import Path
 
 import polars as pl
 
-# tx_data WGS tables the pipeline reads (tx_data PR #11, 2026-11-17).
-TABLES = {
-    "wgs_consensus_segments": ("step 00: MSAI-adjusted CN segments per sample", True),
-    "wgs_clone_proportions": ("steps 02, 04, correction: clone composition of each sample", True),
-    "wgs_conipher_mutations": ("step 00: CONIPHER SCoutput.CLEAN + treeTable per mutation", True),
-    "wgs_conipher_tree_edges": ("step 00: CONIPHER default tree (allTrees.txt)", True),
-    "wgs_alpaca": ("steps 04, correction: ALPACA clone CN per segment", True),
-    "wgs_alpaca_wgd_ratios": ("steps 02, 04, 05, correction: ALPACA tree + WGD ratios", True),
+COHORTS = ("wgs", "wes")
+# Pipeline inputs; [tx_data.tables] maps each to a tx_data table of the run's cohort.
+INPUTS = {
+    "segments": "step 00: MSAI-adjusted CN segments per sample",
+    "clone_proportions": "steps 02, 04, correction: clone composition of each sample",
+    "conipher_mutations": "step 00: CONIPHER SCoutput.CLEAN + treeTable per mutation",
+    "conipher_tree_edges": "step 00: CONIPHER default tree (allTrees.txt)",
+    "alpaca": "steps 04, correction: ALPACA clone CN per segment",
+    "alpaca_wgd_ratios": "steps 02, 04, 05, correction: ALPACA tree + WGD ratios",
 }
-QC_TABLES = {
-    "wgs_conipher_cluster_info": "CCF QC: CONIPHER clusterInfo (truncal, treeClust, meanCCF)",
+QC_INPUTS = {
+    "conipher_cluster_info": "CCF QC: CONIPHER clusterInfo (truncal, treeClust, meanCCF)",
 }
 # Columns each staged file must carry (the step 00 readers check the rest).
-MUT_OUT = {  # SCoutput.CLEAN column step 00 reads <- tx_data wgs_conipher_mutations column
+MUT_OUT = {  # SCoutput.CLEAN column step 00 reads <- column of the conipher_mutations table
     "SAMPLE": "sample", "CHR": "chr", "POS": "pos", "REF": "ref", "ALT": "alt", "CLUSTER": "cluster",
     "MUT_COPY": "mut_copy", "COPY_NUMBER_A": "cn_a", "COPY_NUMBER_B": "cn_b", "mutation_id": "mutation_id",
     "PLOIDY": "ploidy"}
@@ -69,6 +72,26 @@ def get(cfg: dict, key: str):
     return v
 
 
+def table(cfg: dict, name: str) -> str:
+    """tx_data table name for a pipeline input (e.g. `alpaca` -> `wgs_alpaca` in the WGS config)."""
+    return cfg["tx_data"]["tables"][name]
+
+
+def cohort_problems(cfg: dict) -> list[str]:
+    """The config's tables must all belong to its cohort: WGS tables are `wgs_*`, WES tables are not."""
+    cohort = cfg.get("run", {}).get("cohort")
+    if cohort not in COHORTS:
+        return [f"config: [run].cohort must be one of {list(COHORTS)}, not {cohort!r}"]
+    tables = cfg.get("tx_data", {}).get("tables", {})
+    need = list(INPUTS) + (list(QC_INPUTS) if cfg.get("qc", {}).get("enabled") else [])
+    probs = [f"config: [tx_data.tables] missing {k}" for k in need if k not in tables]
+    probs += [f"config: [tx_data.tables] unknown input {k}" for k in tables if k not in INPUTS | QC_INPUTS]
+    wrong = [f"{k} = {v}" for k, v in tables.items() if v.startswith("wgs_") != (cohort == "wgs")]
+    if wrong:
+        probs.append(f"config: cohort {cohort} but [tx_data.tables] has tables of the other cohort: {wrong}")
+    return probs
+
+
 def case_id(tumour_id: str) -> str:
     """`LTX0001-Tumour1` -> CONIPHER case `LTX0001_1` (inverse of pgdd_input.canonical_tumour_id)."""
     return tumour_id.replace("-Tumour", "_")
@@ -76,10 +99,10 @@ def case_id(tumour_id: str) -> str:
 
 def missing_tables(cfg: dict) -> list[str]:
     tx = path(cfg, cfg["tx_data"]["dir"])
-    need = dict(TABLES)
+    need = dict(INPUTS)
     if cfg.get("qc", {}).get("enabled"):
-        need |= {k: (v, False) for k, v in QC_TABLES.items()}
-    return [f"{t}: {need[t][0]}" for t in need if not (tx / f"{t}.parquet").exists()]
+        need |= QC_INPUTS
+    return [f"{table(cfg, k)}: {what}" for k, what in need.items() if not (tx / f"{table(cfg, k)}.parquet").exists()]
 
 
 def check(cfg: dict) -> list[str]:
@@ -89,6 +112,7 @@ def check(cfg: dict) -> list[str]:
             get(cfg, key)
         except KeyError:
             problems.append(f"config: missing {key}")
+    problems += cohort_problems(cfg)
     if not problems:
         if not path(cfg, cfg["tx_data"]["dir"]).is_dir():
             problems.append(f"tx_data.dir not found: {path(cfg, cfg['tx_data']['dir'])}")
@@ -146,7 +170,7 @@ def write(cfg: dict, run_dir: Path) -> None:
     lines = [f"{k} = {_toml_value(v)}" for k, v in p.items()]
     if fixed:
         lines += ["", "[fixed]"] + [f"{k} = {_toml_value(v)}" for k, v in fixed.items()]
-    (out / "wgd_params.toml").write_text("# written by WGD_WGS_pipeline from [wgd.params]\n" + "\n".join(lines) + "\n")
+    (out / "wgd_params.toml").write_text("# written by WGD_pipeline from [wgd.params]\n" + "\n".join(lines) + "\n")
 
 
 def _tumours(cfg: dict, df: pl.DataFrame) -> pl.DataFrame:
@@ -159,19 +183,19 @@ def stage(cfg: dict, run_dir: Path) -> dict:
     miss = missing_tables(cfg)
     if miss:
         raise SystemExit("tx_data tables missing:\n  " + "\n  ".join(miss))
-    read = lambda t: _tumours(cfg, pl.read_parquet(tx / f"{t}.parquet"))  # noqa: E731
+    read = lambda k: _tumours(cfg, pl.read_parquet(tx / f"{table(cfg, k)}.parquet"))  # noqa: E731
     inp = run_dir / "inputs"
-    seg, mut, edges = read("wgs_consensus_segments"), read("wgs_conipher_mutations"), read("wgs_conipher_tree_edges")
+    seg, mut, edges = read("segments"), read("conipher_mutations"), read("conipher_tree_edges")
     tumours = sorted(set(mut["tumour_id"]))
     if not tumours:
         sel = cfg["run"].get("tumours") or []
-        counts = {t: pl.read_parquet(tx / f"{t}.parquet").height for t in TABLES}
+        counts = {table(cfg, k): pl.read_parquet(tx / f"{table(cfg, k)}.parquet").height for k in INPUTS}
         raise SystemExit(
-            f"no tumours to stage: wgs_conipher_mutations in {tx} has no rows"
+            f"no tumours to stage: {table(cfg, 'conipher_mutations')} in {tx} has no rows"
             + (f" for [run].tumours {sel}" if sel else "") + ".\n  rows per table: "
             + ", ".join(f"{t}={n}" for t, n in counts.items())
-            + "\n  If it is empty, check the tx_data build log for 'wgs_conipher_mutations: read N/M WGS tumours'"
-              " and 'no file for ... tumour(s)' (CONIPHER root conipher_wgs in catalog/_sources.yml).")
+            + f"\n  If it is empty, check the tx_data build log for '{table(cfg, 'conipher_mutations')}: read N/M"
+              " tumours' and 'no file for ... tumour(s)' (the CONIPHER root in catalog/_sources.yml).")
     no_seg = sorted(set(tumours) - set(seg["tumour_id"]))
     if no_seg:
         raise SystemExit(f"tumours with CONIPHER mutations but no CN segments: {no_seg[:10]}")
@@ -196,16 +220,16 @@ def stage(cfg: dict, run_dir: Path) -> dict:
             .write_csv(mdir / f"{case}_copynumber_MSAI_adjusted_segments_tree_input.tsv", separator="\t"))
     txo = inp / "tx_data"
     txo.mkdir(parents=True, exist_ok=True)
-    read("wgs_clone_proportions").select("tumour_id", "clone", "sample_id", "proportion").write_parquet(
+    read("clone_proportions").select("tumour_id", "clone", "sample_id", "proportion").write_parquet(
         txo / "clone_proportions.parquet")
-    read("wgs_alpaca").write_parquet(txo / "alpaca.parquet")
-    read("wgs_alpaca_wgd_ratios").write_parquet(txo / "alpaca_wgd_ratios.parquet")
+    read("alpaca").write_parquet(txo / "alpaca.parquet")
+    read("alpaca_wgd_ratios").write_parquet(txo / "alpaca_wgd_ratios.parquet")
     qc = None
     if cfg.get("qc", {}).get("enabled"):
         qdir = inp / "qc"
         qdir.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path(cfg, cfg["qc"]["manual_qc_table"]), qdir / "manual_qc.tsv")
-        ci = read("wgs_conipher_cluster_info")
+        ci = read("conipher_cluster_info")
         rb = lambda c: pl.when(pl.col(c)).then(pl.lit("TRUE")).when(~pl.col(c)).then(pl.lit("FALSE"))  # noqa: E731
         for (t,), g in ci.group_by("tumour_id"):
             patient, n = t.split("-Tumour")
@@ -216,7 +240,7 @@ def stage(cfg: dict, run_dir: Path) -> dict:
                       pl.col("mean_ccf").alias("meanCCF"))
               .write_csv(d / "clusterInfo.txt", separator="\t", null_value="NA"))
         qc = str(qdir)
-    summary = {"tumours": len(tumours), "mutations": mut.height, "segments": seg.height, "qc": qc}
+    summary = {"cohort": cfg["run"]["cohort"], "tumours": len(tumours), "mutations": mut.height, "segments": seg.height, "qc": qc}
     (inp / "staged.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
 
@@ -230,7 +254,11 @@ def main(argv: list[str]) -> None:
         print("\n".join(problems) if problems else "config OK")
         raise SystemExit(1 if problems else 0)
     if cmd == "get":
-        print(get(cfg, argv[2]))
+        try:
+            print(get(cfg, argv[2]))
+        except KeyError:
+            raise SystemExit(f"{argv[1]}: missing {argv[2]} (configs older than WGD_pipeline lack [run].cohort and "
+                             "[tx_data.tables]; start from config.wgs.toml or config.wes.toml)")
     elif cmd == "write":
         write(cfg, Path(argv[2]))
     elif cmd == "stage":

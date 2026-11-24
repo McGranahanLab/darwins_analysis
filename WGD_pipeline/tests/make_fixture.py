@@ -1,5 +1,6 @@
-"""Write a synthetic tx_data store for the WGS pipeline (every table it reads, including the proposed
-ones tx_data doesn't have yet), for the end-to-end test. Synthetic ids only.
+"""Write a synthetic tx_data store for WGD_pipeline (every table it reads, including the proposed WES
+ones tx_data doesn't have yet), for the end-to-end test. Synthetic ids only. `tables` maps each pipeline
+input to the tx_data table name (a config's [tx_data.tables]); default: the WGS names.
 
   SYN0001-Tumour1  2 samples, tree 1 -> {2, 3}; both samples doubled; truncal mutations at 2 copies (clonal GD)
   SYN0002-Tumour1  2 samples, tree 1 -> {2, 3}; R1 doubled, R2 not; cluster 2 (R1) at 2 copies (subclonal GD)
@@ -16,7 +17,16 @@ import polars as pl
 GENOME = [("1", 0, 100_000_000), ("2", 0, 60_000_000), ("3", 0, 40_000_000)]   # 200 Mb
 
 
-def build(out: Path) -> Path:
+WGS_TABLES = {
+    "segments": "wgs_consensus_segments", "clone_proportions": "wgs_clone_proportions",
+    "conipher_mutations": "wgs_conipher_mutations", "conipher_tree_edges": "wgs_conipher_tree_edges",
+    "conipher_cluster_info": "wgs_conipher_cluster_info", "alpaca": "wgs_alpaca",
+    "alpaca_wgd_ratios": "wgs_alpaca_wgd_ratios",
+}
+
+
+def build(out: Path, tables: dict[str, str] | None = None) -> Path:
+    tables = tables or WGS_TABLES
     out.mkdir(parents=True, exist_ok=True)
     tumours = {
         "SYN0001-Tumour1": dict(tree=[(1, 2), (1, 3)], samples={"R1": 2, "R2": 3}, doubled={"R1": True, "R2": True},
@@ -71,13 +81,10 @@ def build(out: Path) -> Path:
                 cn = 2 if inherited and chrom in ("1", "2") and (t != "SYN0002-Tumour1" or c == "clone2") else 1
                 alp.append({"tumour_id": t, "segment": f"{chrom}_{start}_{end}", "clone": c, "pred_CN_A": cn,
                             "pred_CN_B": cn})
-    pl.DataFrame(seg).write_parquet(out / "wgs_consensus_segments.parquet")
-    pl.DataFrame(mut).write_parquet(out / "wgs_conipher_mutations.parquet")
-    pl.DataFrame(edges).write_parquet(out / "wgs_conipher_tree_edges.parquet")
-    pl.DataFrame(cp).write_parquet(out / "wgs_clone_proportions.parquet")
-    pl.DataFrame(alp).write_parquet(out / "wgs_alpaca.parquet")
-    pl.DataFrame(rat).write_parquet(out / "wgs_alpaca_wgd_ratios.parquet")
-    pl.DataFrame(info).write_parquet(out / "wgs_conipher_cluster_info.parquet")
+    for name, rows in (("segments", seg), ("conipher_mutations", mut), ("conipher_tree_edges", edges),
+                       ("clone_proportions", cp), ("alpaca", alp), ("alpaca_wgd_ratios", rat),
+                       ("conipher_cluster_info", info)):
+        pl.DataFrame(rows).write_parquet(out / f"{tables[name]}.parquet")
     (out / "manual_qc.tsv").write_text("\n".join(qc) + "\n")
     return out
 

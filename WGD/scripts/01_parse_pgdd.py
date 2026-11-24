@@ -6,7 +6,7 @@ Usage:
 
 `--nemo-root` defaults to $TX_NEMO_ROOT. Locally, point it at tx_data's
 `nemo_mock/` (needs tx_data PR #5, branch darwin/pgdd-mock).
-`--expected-settings <json>`: PGDD settings to check the run against (WGD_WGS_pipeline passes its
+`--expected-settings <json>`: PGDD settings to check the run against (WGD_pipeline passes its
 [pgdd.settings]); default `wgd.pgdd.EXPECTED_SETTINGS`. A `run.json` in the PGDD directory (written by
 the pipeline's PGDD wrapper) supplies values the outputs don't carry.
 """
