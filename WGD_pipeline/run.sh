@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# WGD_WGS_pipeline: PGDD -> WGD caller (WGD steps 00-07) -> ALPACA post-hoc correction, TRACERx WGS.
-# Every setting comes from one config file (config.toml). Inputs come from the tx_data store.
+# WGD_pipeline: PGDD -> WGD caller (WGD steps 00-07) -> ALPACA post-hoc correction, TRACERx WGS or WES.
+# Every setting comes from one config file: config.wgs.toml (WGS) or config.wes.toml (WES). Inputs come from
+# the tx_data store; [tx_data.tables] picks the cohort's tables.
 #
 #   ./run.sh <config.toml> [--from STEP] [--to STEP] [--only STEP]
 #
 # Steps, in order:
 #   check    validate the config and list tx_data tables that are missing (stops if any)
-#   stage    tx_data WGS tables -> <out>/inputs (layouts the steps read); settings files -> <out>/config
+#   stage    tx_data tables -> <out>/inputs (layouts the steps read); settings files -> <out>/config
 #   wgd00    WGD step 00: per-sample num_gds, PGDD input table (single-clone tumours set aside)
 #   pgdd     ParallelGDDetect (detect_par_gd) with [pgdd.settings]
 #   wgd01    parse PGDD          wgd02  prune to the ALPACA tree     wgd03  per-sample summary
@@ -19,7 +20,7 @@
 # [pgdd].rscript. Logs: <out>/logs/<step>.log.
 set -euo pipefail
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 [[ $# -ge 1 ]] || usage 1
 [[ $1 == -h || $1 == --help ]] && usage 0
 
@@ -45,9 +46,10 @@ PIXI=${PIXI:-pixi}
 WGD="$ROOT/WGD"; APC="$ROOT/alpaca_post_hoc_correction"
 wgdpy() { "$PIXI" run --manifest-path "$WGD/pixi.toml" python "$@"; }
 apcpy() { "$PIXI" run --manifest-path "$APC/pixi.toml" python "$@"; }
-cfg() { wgdpy "$HERE/pipeline/wgs.py" get "$CONFIG" "$1"; }
+cfg() { wgdpy "$HERE/pipeline/prep.py" get "$CONFIG" "$1"; }
 
 OUT=$(cfg run.out_dir)
+COHORT=$(cfg run.cohort); COHORT_LABEL=${COHORT^^}
 mkdir -p "$OUT/logs"
 IN="$OUT/inputs"; W="$OUT/wgd"; P="$OUT/pgdd"; TX="$IN/tx_data"
 
@@ -59,8 +61,8 @@ run_step() {  # run_step <name> <command...>: log to <out>/logs/<name>.log, stop
   fi
 }
 
-step_check() { wgdpy "$HERE/pipeline/wgs.py" check "$CONFIG"; }
-step_stage() { wgdpy "$HERE/pipeline/wgs.py" stage "$CONFIG" "$OUT" && wgdpy "$HERE/pipeline/wgs.py" write "$CONFIG" "$OUT"; }
+step_check() { wgdpy "$HERE/pipeline/prep.py" check "$CONFIG"; }
+step_stage() { wgdpy "$HERE/pipeline/prep.py" stage "$CONFIG" "$OUT" && wgdpy "$HERE/pipeline/prep.py" write "$CONFIG" "$OUT"; }
 step_wgd00() {
   local extra=(); [[ $(cfg wgd.keep_nontree_clusters) == true ]] && extra+=(--keep-nontree-clusters)
   wgdpy "$WGD/scripts/00_prepare_pgdd_input.py" --conipher-dir "$IN/conipher" --msai-dir "$IN/msai" --out "$W" "${extra[@]}"
@@ -88,7 +90,7 @@ step_wgd05() {
   wgdpy "$WGD/scripts/05_final_table.py" --tx-data-dir "$TX" --out "$W" "${extra[@]}"
 }
 step_wgd07() {
-  wgdpy "$WGD/scripts/07_report.py" --out "$W" --review-quality "$(cfg wgd.review_quality)" --title "WGD calls: TRACERx WGS"
+  wgdpy "$WGD/scripts/07_report.py" --out "$W" --review-quality "$(cfg wgd.review_quality)" --title "WGD calls: TRACERx $COHORT_LABEL"
 }
 step_correct() {
   local mq extra=(); mq=$(cfg correction.min_quality)
@@ -98,7 +100,7 @@ step_correct() {
     --out "$OUT/correction" "${extra[@]}"
 }
 
-echo "WGD_WGS_pipeline  config=$CONFIG  out=$OUT  steps=${STEPS[*]:$I_FROM:$((I_TO - I_FROM + 1))}"
+echo "WGD_pipeline  cohort=$COHORT  config=$CONFIG  out=$OUT  steps=${STEPS[*]:$I_FROM:$((I_TO - I_FROM + 1))}"
 cp "$CONFIG" "$OUT/logs/config.used.toml"
 git -C "$ROOT" rev-parse --short HEAD > "$OUT/logs/darwins_analysis_commit.txt" 2>/dev/null || true
 for i in $(seq "$I_FROM" "$I_TO"); do run_step "${STEPS[$i]}" "step_${STEPS[$i]}"; done

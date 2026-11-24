@@ -181,7 +181,7 @@ def check_settings(pgdd: dict[str, pl.DataFrame], expected: dict | None = None,
 
     Values come from the outputs (mut_counts columns, bootstrap settings). When the outputs carry no
     value (e.g. mut_counts is empty because no cluster was tested), `recorded` is used: the
-    settings the run was started with (`run.json` written by the WGD_WGS_pipeline PGDD wrapper).
+    settings the run was started with (`run.json` written by the WGD_pipeline PGDD wrapper).
     A setting found nowhere is reported with found = None.
     """
     expected = EXPECTED_SETTINGS if expected is None else expected

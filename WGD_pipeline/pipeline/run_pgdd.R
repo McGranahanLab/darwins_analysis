@@ -1,9 +1,9 @@
 #!/usr/bin/env Rscript
-# Run ParallelGDDetect (detect_par_gd) on the step 00 input with the settings from config.toml.
+# Run ParallelGDDetect (detect_par_gd) on the step 00 input with the settings from the config (config.wgs.toml / config.wes.toml).
 #
 #   Rscript run_pgdd.R <pgdd_src> <pgdd_input_all_tumours.tsv> <pgdd_settings.json> <out_dir>
 #
-# Every setting comes from [pgdd.settings] (written to JSON by wgs.py), so nothing relies on
+# Every setting comes from [pgdd.settings] (written to JSON by prep.py), so nothing relies on
 # PGDD's defaults. Output file names are the ones the lab's run wrapper writes and step 01 reads;
 # unstable_calls_* are for manual review only.
 

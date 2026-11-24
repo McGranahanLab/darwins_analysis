@@ -1,27 +1,39 @@
-# WGD_WGS_pipeline: the single configuration file for every step (PGDD -> WGD caller -> ALPACA post-hoc
-# correction on the TRACERx WGS cohort). Relative paths are relative to this file.
-#   ./run.sh config.toml                 run everything
-#   ./run.sh config.toml --from wgd04    resume from a step (see ./run.sh --help)
+# WGD_pipeline, WES configuration: the single configuration file for every step (PGDD -> WGD caller -> ALPACA
+# post-hoc correction) on the TRACERx WES cohort (tx842). config.wgs.toml is the WGS one; the two differ only in the
+# cohort, the output dir, [tx_data.tables] and the PGDD mutation-count thresholds (a test checks this).
+# Relative paths are relative to this file.
+#   ./run.sh config.wes.toml                 run everything
+#   ./run.sh config.wes.toml --from wgd04    resume from a step (see ./run.sh --help)
 
 [run]
-out_dir = "output/run"                 # everything is written here
+cohort = "wes"                         # wgs or wes; check stops if a [tx_data.tables] entry belongs to the other
+out_dir = "output/wes"                 # everything is written here
 tumours = []                           # only these tumour ids (e.g. ["LTX0001-Tumour1"]); empty = all
 
 [tx_data]
 dir = "../../tx_data/data"             # built tx_data store (data/*.parquet); on Nemo: a prod build
 
+[tx_data.tables]                       # pipeline input -> tx_data table (WES tables)
+segments = "msai_segments"             # NOT IN tx_data YET: WES MSAI-adjusted segments (WGD/TODO.md)
+clone_proportions = "clone_proportions"
+conipher_mutations = "conipher_mutations"      # NOT IN tx_data YET: WES SCoutput.CLEAN + treeTable
+conipher_tree_edges = "conipher_tree_edges"    # NOT IN tx_data YET: WES allTrees.txt default tree
+conipher_cluster_info = "conipher_cluster_info"   # NOT IN tx_data YET: WES clusterInfo (CCF QC, [qc].enabled)
+alpaca = "alpaca"
+alpaca_wgd_ratios = "alpaca_wgd_ratios"
+
 [pgdd]
 src = "~/scratch/ParallelGDDetect"           # checkout of amf71/ParallelGDDetect (tested at cb0437b)
 rscript = "Rscript"                    # e.g. "micromamba run -n pgdd Rscript"
 
-[pgdd.settings]                        # passed verbatim to detect_par_gd() (Piotr's settings, 2026-11-09)
+[pgdd.settings]                        # passed verbatim to detect_par_gd(); WES thresholds (Piotr, 2026-11-09)
 discover_mut_cpn_2_threshold = 1.5
 check_mut_cpn_2_threshold = 1.25       # pass explicitly: PGDD's NULL default falls back to 1.5
-discover_num_muts_threshold = 100
+discover_num_muts_threshold = 10
 discover_frac_2_cpn_muts_threshold = 0.25
 check_frac_2_cpn_muts_threshold = 0.1
-discover_num_2_cpn_muts_threshold = 50
-check_num_2_cpn_muts_threshold = 30
+discover_num_2_cpn_muts_threshold = 5
+check_num_2_cpn_muts_threshold = 3
 bootstrap_discovery = true
 n_boot = 500
 seed = 1
@@ -42,8 +54,7 @@ review_quality = 0.3                   # step 07: list tumours scoring below thi
 [qc]
 enabled = true                         # upstream QC (manual QC table) + CCF QC (truncal meanCCF > 90, from
                                        # tx_data wgs_conipher_cluster_info); failing tumours stay in the output
-# The WGS run uses the WES manual QC table (Note from 2026-11-17: every WGS tumour is in the WES cohort so this should work, unless we hit the naming mismatch),
-# read from its file, not from tx_data. Sandbox: config.sandbox.toml points at the tx_data mock copy.
+# The manual QC table is read from its file, not from tx_data.
 manual_qc_table = "/nemo/project/proj-tracerx-lung/tracerx/_RELEASE/release_tx842/_aggregate/20250729_tx842_manual_qc_complete_post_refphase.tsv"
 
 [correction]
