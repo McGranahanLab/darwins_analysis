@@ -87,8 +87,18 @@ fill places GDs on their only clone until every sample matches its `num_gds`, wi
 quality factors and QC as for any tumour. Class `clonal_wgd` or `no_wgd`. Samples that disagree and
 can't be reconciled leave the tumour `unresolved`.
 
-## Known gaps
+## Known gaps / TODO
 
+- **TODO: a separate WES pipeline** (Piotr, 2026-11-19). This pipeline is strictly WGS: its PGDD thresholds
+  are WGS-scale (`discover_num_muts_threshold` 100, `discover_num_2_cpn_muts_threshold` 50,
+  `check_num_2_cpn_muts_threshold` 30). Create `WGD_WES_pipeline/`, identical in structure, with its own
+  config (WES settings, WES tx_data tables), so WES settings are never used for WGS or the reverse.
 - TODO (tx_data): give the manual QC mock the real file's full column set.
-- Needs darwins_analysis PR "WGD: single-clone tumours …" (step 04 `--single-clone`, step 01
-  `--expected-settings`) merged first; step 01 now checks PGDD against `[pgdd.settings]`.
+- `check` stops when `[pgdd].src` is a PGDD without the bootstrap/stability arguments (e.g. the wlippa
+  fork at 1af16a8); use amf71/ParallelGDDetect at cb0437b or later.
+
+## Output: quality_pass
+
+`wgd_calls.tsv` keeps every call. `quality_pass` (2026-11-19) is False on a clone carrying a GD with event
+quality below `[wgd].quality_cutoff` (the GDs `wgd_calls_rejected_below_<Q>.tsv` drops; mutation-supported GDs
+pass unless `reject_mutation_supported`), True otherwise, null on rows without calls or with cutoff -1.

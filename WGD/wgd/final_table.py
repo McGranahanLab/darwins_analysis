@@ -35,6 +35,8 @@ when the tumour has no ALPACA tree). QC columns on every row (`with_qc`):
 * n_unplaced_events: events with no clone, or placed on a PGDD cluster that is
   not an ALPACA clone (they add no GD to any row).
 * n_rejected_events: GDs dropped by `--reject-below` (0 without it).
+* quality_pass: with `--reject-below Q`, False when a GD on this clone has event quality < Q (the GDs the
+  filtered table drops), else True; null without Q and on rows without calls (Piotr, 2026-11-19).
 
 The per-event table (`build_events`, `wgd_events.tsv`) has one row per GD with a
 unique `wgd_event_id` (tumour:clone:k), its source, PGDD event, quality and factors.
@@ -57,7 +59,7 @@ COLUMNS = ("tumour_id", "clone", "parent", "number_of_gds_at_clone", "total_gds_
            "quality", "status", "class", "sub_class", "quality_code", "worst_event_quality", "worst_event_quality_code",
            "n_unplaced_events", "n_rejected_events", "ploidy_prior")
 QC_FIELDS = ("upstream_qc", "ccf_qc", "truncal_min_ccf", "qc_pass", "qc_reason")
-OUTPUT_COLUMNS = COLUMNS + QC_FIELDS   # wgd_calls.tsv: build_table + with_qc
+OUTPUT_COLUMNS = COLUMNS + ("quality_pass",) + QC_FIELDS   # wgd_calls.tsv: build_table + with_quality_pass + with_qc
 QC_FAILED = "qc_failed"
 NO_TREE = "no_alpaca_tree"
 NO_CALL_STATUSES = (QC_FAILED, NO_TREE)   # rows kept for visibility, every WGD call null
@@ -216,14 +218,31 @@ def build_table(events: pl.DataFrame, tumours: pl.DataFrame, pgdd_tumours: pl.Da
     return pl.DataFrame(rows, schema=schema).sort("tumour_id", "clone", nulls_last=True)
 
 
+def with_quality_pass(table: pl.DataFrame, event_table: pl.DataFrame, reject_below: float | None) -> pl.DataFrame:
+    """`quality_pass` per row (Piotr, 2026-11-19): False when any GD on this clone has event quality below
+    the cut-off (`reject_below`, the same events `--reject-below` drops; mutation-supported GDs pass unless
+    `--reject-mutation-supported`), True otherwise, including clones without a GD. Null without a cut-off.
+    Rows without calls (qc_failed, no_alpaca_tree) get null from `with_qc`."""
+    if reject_below is None:
+        return table.with_columns(pl.lit(None, pl.Boolean).alias("quality_pass"))
+    bad = (event_table.filter(pl.col("rejected") & pl.col("clone").is_not_null())
+                      .select("tumour_id", "clone").unique().with_columns(pl.lit(False).alias("quality_pass")))
+    out = table.join(bad, on=["tumour_id", "clone"], how="left")
+    keep = pl.col("status").is_in(list(NO_CALL_STATUSES)) if "status" in table.columns else pl.lit(False)
+    return out.with_columns(pl.when(keep).then(None).otherwise(pl.col("quality_pass").fill_null(True))
+                              .alias("quality_pass"))
+
+
 def with_qc(table: pl.DataFrame, qc: pl.DataFrame | None, ratios: pl.DataFrame) -> pl.DataFrame:
     """Add the QC columns to every row and one row per ALPACA clone for each QC-failed tumour,
     with `status = qc_failed` and every WGD call null (Piotr, 2026-11-16). `qc`: step 04's
     tumour_qc.tsv; None (older step 04 output) leaves the QC columns null."""
     schema = {"upstream_qc": pl.Utf8, "ccf_qc": pl.Utf8, "truncal_min_ccf": pl.Float64, "qc_pass": pl.Boolean,
               "qc_reason": pl.Utf8}
+    if "quality_pass" not in table.columns:
+        table = table.with_columns(pl.lit(None, pl.Boolean).alias("quality_pass"))
     if qc is None:
-        return table.with_columns(*[pl.lit(None, d).alias(c) for c, d in schema.items()])
+        return table.with_columns(*[pl.lit(None, d).alias(c) for c, d in schema.items()]).select(OUTPUT_COLUMNS)
     qc = qc.select("tumour_id", *[pl.col(c).cast(d) for c, d in schema.items()])
     out = table.join(qc, on="tumour_id", how="left")
     failed = qc.filter(~pl.col("qc_pass"))
