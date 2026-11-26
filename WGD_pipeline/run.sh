@@ -16,11 +16,15 @@
 #   wgd07    cohort report (07_report/report.html)
 #   correct  ALPACA post-hoc correction on the (filtered) calls
 #
+# Tumours with missing or unusable inputs are left out and the run goes on ([run].on_tumour_failure = "skip",
+# the default; "stop" fails instead). Every left-out tumour, with the step and reason, is listed at the end and
+# in <out>/failed_tumours.tsv.
+#
 # Environment: PIXI (default `pixi`) runs the WGD and correction environments; R comes from
 # [pgdd].rscript. Logs: <out>/logs/<step>.log.
 set -euo pipefail
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 [[ $# -ge 1 ]] || usage 1
 [[ $1 == -h || $1 == --help ]] && usage 0
 
@@ -65,6 +69,7 @@ step_check() { wgdpy "$HERE/pipeline/prep.py" check "$CONFIG"; }
 step_stage() { wgdpy "$HERE/pipeline/prep.py" stage "$CONFIG" "$OUT" && wgdpy "$HERE/pipeline/prep.py" write "$CONFIG" "$OUT"; }
 step_wgd00() {
   local extra=(); [[ $(cfg wgd.keep_nontree_clusters) == true ]] && extra+=(--keep-nontree-clusters)
+  [[ $(cfg run.on_tumour_failure) == skip ]] && extra+=(--skip-failed)
   wgdpy "$WGD/scripts/00_prepare_pgdd_input.py" --conipher-dir "$IN/conipher" --msai-dir "$IN/msai" --out "$W" "${extra[@]}"
 }
 step_pgdd() {
@@ -104,4 +109,6 @@ echo "WGD_pipeline  cohort=$COHORT  config=$CONFIG  out=$OUT  steps=${STEPS[*]:$
 cp "$CONFIG" "$OUT/logs/config.used.toml"
 git -C "$ROOT" rev-parse --short HEAD > "$OUT/logs/darwins_analysis_commit.txt" 2>/dev/null || true
 for i in $(seq "$I_FROM" "$I_TO"); do run_step "${STEPS[$i]}" "step_${STEPS[$i]}"; done
+echo "== tumours left out of this run"
+wgdpy "$HERE/pipeline/prep.py" failures "$OUT" | tee "$OUT/logs/failures.log"
 echo "done: $OUT"

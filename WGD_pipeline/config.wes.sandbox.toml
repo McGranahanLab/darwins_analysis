@@ -1,14 +1,14 @@
-# WGD_pipeline, WES sandbox: the tx_data WES mock cohort. Same as config.wes.toml except the output dir, the manual
-# QC table (the mock copy in tx_data/nemo_mock) and [run].tumours: LTX0009 and LTX0010 are mock tumours without an
-# ALPACA input, and a tumour without every input stops `stage` (Piotr, 2026-11-24). tx_data must be built with
-# `pixi run build sandbox` (tx_data#14 for the WES tables).
+# WGD_pipeline, WES sandbox: the tx_data WES mock cohort. Same as config.wes.toml except the output dir and the manual
+# QC table (the mock copy in tx_data/nemo_mock). LTX0009 and LTX0010 are mock tumours without an ALPACA input: they
+# are left out and listed in failed_tumours.tsv. tx_data must be built with `pixi run build sandbox` (tx_data#14).
 #   ./run.sh config.wes.sandbox.toml
 
 [run]
 cohort = "wes"                         # wgs or wes; check stops if a [tx_data.tables] entry belongs to the other
 out_dir = "output/wes_sandbox"                 # everything is written here
-tumours = ["LTX0001-Tumour1", "LTX0002-Tumour1", "LTX0003-Tumour1", "LTX0004-Tumour1", "LTX0005-Tumour1",
-           "LTX0006-Tumour1", "LTX0007-Tumour1", "LTX0008-Tumour1", "LTX0008-Tumour2"]
+tumours = []                           # only these tumour ids (e.g. ["LTX0001-Tumour1"]); empty = all
+on_tumour_failure = "skip"             # skip: leave out tumours with missing/unusable inputs, list them with the
+                                       # reason in <out_dir>/failed_tumours.tsv (Piotr, 2026-11-26); stop: fail
 
 [tx_data]
 dir = "../../tx_data/data"             # built tx_data store (data/*.parquet); on Nemo: a prod build

@@ -7,6 +7,8 @@
 cohort = "wgs"                         # wgs or wes; check stops if a [tx_data.tables] entry belongs to the other
 out_dir = "output/wgs_sandbox"                 # everything is written here
 tumours = []                           # only these tumour ids (e.g. ["LTX0001-Tumour1"]); empty = all
+on_tumour_failure = "skip"             # skip: leave out tumours with missing/unusable inputs, list them with the
+                                       # reason in <out_dir>/failed_tumours.tsv (Piotr, 2026-11-26); stop: fail
 
 [tx_data]
 dir = "../../tx_data/data"             # built tx_data store (data/*.parquet); on Nemo: a prod build

@@ -189,3 +189,40 @@ def test_stage_stops_when_no_tumours(tmp_path):
     m.clear().write_parquet(tmp_path / "tx" / "wgs_conipher_mutations.parquet")
     with pytest.raises(SystemExit, match="no tumours to stage"):
         prep.stage(prep.load(config(tmp_path)), tmp_path / "run")
+
+
+@pytest.mark.parametrize("cohort", COHORTS)
+def test_stage_skips_tumour_without_segments(tmp_path, cohort):
+    """2026-11-26 (Piotr): a tumour without an input is left out and recorded; "stop" keeps the old behaviour."""
+    fixture(tmp_path, cohort)
+    seg = tmp_path / "tx" / f"{tables(cohort)['segments']}.parquet"
+    pl.read_parquet(seg).filter(pl.col("tumour_id") != "SYN0002-Tumour1").write_parquet(seg)
+    res = prep.stage(prep.load(config(tmp_path, cohort)), tmp_path / "run")
+    assert res["tumours"] == 2 and res["failed_tumours"] == 1
+    f = pl.read_csv(tmp_path / "run" / "inputs" / "failed_tumours.tsv", separator="\t")
+    assert f.rows() == [("SYN0002-Tumour1", "stage", f"no CN segments ({tables(cohort)['segments']})")]
+    stop = config(tmp_path, cohort, **{'on_tumour_failure = "skip"': 'on_tumour_failure = "stop"'})
+    with pytest.raises(SystemExit, match="SYN0002-Tumour1: no CN segments"):
+        prep.stage(prep.load(stop), tmp_path / "run2")
+
+
+@pytest.mark.skipif(not _tools(), reason="needs pixi and micromamba (pgdd env) on PATH")
+def test_full_run_completes_with_failing_tumours(tmp_path):
+    """One tumour fails at stage (no segments), one at step 00 (SAMPLE ids differ); the run completes and
+    failed_tumours.tsv lists both with step and reason."""
+    fixture(tmp_path)
+    seg = tmp_path / "tx" / "wgs_consensus_segments.parquet"
+    s = pl.read_parquet(seg).filter(pl.col("tumour_id") != "SYN0003-Tumour1")
+    s.with_columns(pl.when(pl.col("tumour_id") == "SYN0002-Tumour1").then(pl.col("sample") + "_x")
+                   .otherwise(pl.col("sample")).alias("sample")).write_parquet(seg)
+    cfg = config(tmp_path, **{'rscript = "Rscript"': 'rscript = "micromamba run -n pgdd Rscript"',
+                              "n_boot = 500": "n_boot = 50"})
+    r = subprocess.run([str(HERE / "run.sh"), str(cfg)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    run = tmp_path / "run"
+    f = pl.read_csv(run / "failed_tumours.tsv", separator="\t")
+    assert f.select("tumour_id", "step").rows() == [("SYN0002-Tumour1", "wgd00"), ("SYN0003-Tumour1", "stage")]
+    assert "SAMPLE ids differ" in f["reason"][0]
+    calls = pl.read_csv(run / "wgd" / "05_table" / "wgd_calls.tsv", separator="\t", null_values=["NA"])
+    assert set(calls["tumour_id"]) == {"SYN0001-Tumour1"}
+    assert "2 tumour(s) left out of the run" in r.stdout

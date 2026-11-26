@@ -6,6 +6,7 @@ feeds each input (WGS: wgs_*; WES: the unprefixed tables).
   python prep.py get    <config> <key>      print one value (dotted key; paths resolved; lists space-joined)
   python prep.py write  <config> <run_dir>  write pgdd_settings.json and wgd_params.toml into <run_dir>/config/
   python prep.py stage  <config> <run_dir>  tx_data (+ the manual QC file) -> <run_dir>/inputs/{conipher,msai,tx_data,qc}
+  python prep.py failures <run_dir>         collect every step's failed_tumours.tsv -> <run_dir>/failed_tumours.tsv
 
 Staged layout (what each step expects):
   inputs/conipher/<CASE>/<CASE>.SCoutput.CLEAN.tsv, treeTable.tsv, allTrees.txt   step 00
@@ -57,6 +58,8 @@ def path(cfg: dict, value: str) -> Path:
 
 
 def get(cfg: dict, key: str):
+    if key == "run.on_tumour_failure":
+        return on_failure(cfg)
     if key == "derived.calls_file":      # step 05 table the correction reads
         q = float(cfg["wgd"]["quality_cutoff"])
         return "wgd_calls.tsv" if q < 0 else f"wgd_calls_rejected_below_{q:g}.tsv"
@@ -90,6 +93,34 @@ def cohort_problems(cfg: dict) -> list[str]:
     if wrong:
         probs.append(f"config: cohort {cohort} but [tx_data.tables] has tables of the other cohort: {wrong}")
     return probs
+
+
+def on_failure(cfg: dict) -> str:
+    """[run].on_tumour_failure: "skip" (default; leave the tumour out, record why) or "stop"."""
+    v = cfg.get("run", {}).get("on_tumour_failure", "skip")
+    if v not in ("skip", "stop"):
+        raise SystemExit(f"[run].on_tumour_failure must be \"skip\" or \"stop\", not {v!r}")
+    return v
+
+
+FAILURE_COLS = ("tumour_id", "step", "reason")
+
+
+def write_failures(path: Path, step: str, failed: list[tuple[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame([(t, step, r) for t, r in failed], schema=list(FAILURE_COLS), orient="row").write_csv(
+        path, separator="\t")
+    for t, r in failed:
+        print(f"  skipped {t} ({step}): {r}")
+
+
+def collect_failures(run_dir: Path) -> pl.DataFrame:
+    """Every tumour left out of the run, from each step's failed_tumours.tsv -> <run>/failed_tumours.tsv."""
+    files = [run_dir / "inputs" / "failed_tumours.tsv", run_dir / "wgd" / "00_pgdd_input" / "failed_tumours.tsv"]
+    frames = [pl.read_csv(f, separator="\t", infer_schema_length=0) for f in files if f.is_file()]
+    df = (pl.concat(frames) if frames else pl.DataFrame(schema={c: pl.String for c in FAILURE_COLS})).sort("tumour_id")
+    df.write_csv(run_dir / "failed_tumours.tsv", separator="\t")
+    return df
 
 
 def case_id(tumour_id: str) -> str:
@@ -196,10 +227,21 @@ def stage(cfg: dict, run_dir: Path) -> dict:
             + ", ".join(f"{t}={n}" for t, n in counts.items())
             + f"\n  If it is empty, check the tx_data build log for '{table(cfg, 'conipher_mutations')}: read N/M"
               " tumours' and 'no file for ... tumour(s)' (the CONIPHER root in catalog/_sources.yml).")
-    no_seg = sorted(set(tumours) - set(seg["tumour_id"]))
-    if no_seg:
-        raise SystemExit(f"{len(no_seg)} tumour(s) with CONIPHER mutations ({table(cfg, 'conipher_mutations')}) but no "
-                         f"CN segments ({table(cfg, 'segments')}); every tumour needs every input: {no_seg}")
+    failed = []   # (tumour_id, reason): tumours left out of the run (Piotr, 2026-11-26: the run completes)
+    for t in sorted(set(tumours) - set(seg["tumour_id"])):
+        failed.append((t, f"no CN segments ({table(cfg, 'segments')})"))
+    for t in sorted(set(tumours) - set(edges["tumour_id"])):
+        failed.append((t, f"no CONIPHER tree ({table(cfg, 'conipher_tree_edges')})"))
+    cp_tumours = set(read("clone_proportions")["tumour_id"])
+    for t in sorted((set(seg["tumour_id"]) | cp_tumours) - set(tumours)):
+        has = [n for n, ids in (("CN segments", set(seg["tumour_id"])), ("ALPACA clone proportions", cp_tumours))
+               if t in ids]
+        failed.append((t, f"{' and '.join(has)} but no CONIPHER mutations ({table(cfg, 'conipher_mutations')})"))
+    if failed and on_failure(cfg) == "stop":
+        raise SystemExit(f"{len(failed)} tumour input problem(s) ([run].on_tumour_failure = \"stop\"):\n  "
+                         + "\n  ".join(f"{t}: {r}" for t, r in failed))
+    tumours = [t for t in tumours if t not in {f for f, _ in failed}]
+    write_failures(inp / "failed_tumours.tsv", "stage", failed)
     for t in tumours:
         case = case_id(t)
         cdir, mdir = inp / "conipher" / case, inp / "msai" / case
@@ -241,14 +283,21 @@ def stage(cfg: dict, run_dir: Path) -> dict:
                       pl.col("mean_ccf").alias("meanCCF"))
               .write_csv(d / "clusterInfo.txt", separator="\t", null_value="NA"))
         qc = str(qdir)
-    summary = {"cohort": cfg["run"]["cohort"], "tumours": len(tumours), "mutations": mut.height, "segments": seg.height, "qc": qc}
+    summary = {"cohort": cfg["run"]["cohort"], "tumours": len(tumours), "failed_tumours": len(failed), "mutations": mut.height, "segments": seg.height, "qc": qc}
     (inp / "staged.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
 
 
 def main(argv: list[str]) -> None:
-    if len(argv) < 2 or argv[0] not in ("check", "get", "write", "stage"):
+    if len(argv) < 2 or argv[0] not in ("check", "get", "write", "stage", "failures"):
         raise SystemExit(__doc__)
+    if argv[0] == "failures":
+        df = collect_failures(Path(argv[1]))
+        print(f"{df['tumour_id'].n_unique()} tumour(s) left out of the run (full list: {Path(argv[1]) / 'failed_tumours.tsv'})")
+        for (reason,), g in df.group_by("reason", maintain_order=True):
+            print(f"  {g.height:>4}  {reason}: " + ", ".join(g["tumour_id"].head(10).to_list())
+                  + (" ..." if g.height > 10 else ""))
+        return
     cmd, cfg = argv[0], load(Path(argv[1]))
     if cmd == "check":
         problems = check(cfg)

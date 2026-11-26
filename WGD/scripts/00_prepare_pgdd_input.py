@@ -44,6 +44,9 @@ def main() -> None:
                     help="keep mutations whose tree cluster is not an edge of the default tree")
     ap.add_argument("--tumours", nargs="+", help="only these tumour directories")
     ap.add_argument("--preflight-only", action="store_true", help="only check inputs, write nothing")
+    ap.add_argument("--skip-failed", action="store_true",
+                    help="leave out tumours with input problems instead of stopping; they are listed with the "
+                         "reason in 00_pgdd_input/failed_tumours.tsv")
     args = ap.parse_args()
 
     try:
@@ -58,13 +61,18 @@ def main() -> None:
             print(f"pre-flight OK: {len(dirs)} tumours")
             return
         res = pgdd_input.prepare_all(args.conipher_dir, args.msai_dir, tumours=args.tumours,
-                                     remove_nontree_clusters=not args.keep_nontree_clusters)
+                                     remove_nontree_clusters=not args.keep_nontree_clusters,
+                                     skip_failed=args.skip_failed)
     except pgdd_input.InputError as e:
         sys.exit(f"ERROR: {e}")
     out = args.out / "00_pgdd_input"
     out.mkdir(parents=True, exist_ok=True)
     pgdd_input.write_tsv(res.table, out / "pgdd_input_all_tumours.tsv")
     pgdd_input.write_tsv(res.single_clone, out / "single_clone_samples.tsv")
+    if args.skip_failed:
+        pl.DataFrame([(t.replace("_", "-Tumour"), "wgd00", r) for t, r in sorted(res.failed.items())],
+                     schema=["tumour_id", "step", "reason"], orient="row").write_csv(
+            out / "failed_tumours.tsv", separator="\t")
     events = pgdd_input.single_clone_events(res.single_clone)
     pgdd_input.write_tsv(events, out / "single_clone_events.tsv")
 

@@ -106,6 +106,23 @@ pixi run --manifest-path ../WGD/pixi.toml pytest tests/ -q
 (including the proposed WES ones); the tests run for both configs, and the full-run test runs the whole
 pipeline on it, PGDD included (skipped without pixi + micromamba). 14 tests (2026-11-24).
 
+## Tumours with missing or unusable inputs
+
+Since 2026-11-26 (Piotr; it replaces the 2026-11-24 "stop on any missing input"), the run completes when some
+tumours fail: they are left out and recorded, and the other tumours go on. `[run].on_tumour_failure = "stop"`
+restores the old behaviour.
+
+| step | a tumour is left out when |
+|---|---|
+| stage | it has CONIPHER mutations but no CN segments, or no CONIPHER tree; or it has segments / ALPACA clone proportions but no CONIPHER mutations |
+| wgd00 | the step 00 pre-flight fails: missing/empty file, missing column, unreadable tree, SAMPLE ids differing between SCoutput, treeTable and the segments; or no PGDD input rows after filtering |
+
+Each step writes its `failed_tumours.tsv` (`tumour_id, step, reason`; `inputs/` for stage, `wgd/00_pgdd_input/` for
+step 00). At the end the run combines them into **`<out_dir>/failed_tumours.tsv`** and prints a summary by reason
+(also in `logs/failures.log`). A tumour can appear more than once (one row per problem). Left-out tumours are not
+in `wgd_calls.tsv`. Problems after step 00 (PGDD, steps 01-07, correction) are not per tumour and still stop the
+run. tx_data records its own per-tumour build problems in `data/build_issues.tsv`.
+
 ## Single-clone tumours
 
 Step 00 sets single-clone tumours aside (they don't go to PGDD). Since 2026-11-17 (Piotr) step 04 reads
@@ -116,7 +133,6 @@ can't be reconciled leave the tumour `unresolved`.
 
 ## Known gaps / TODO
 
-- Missing inputs stop the run (Piotr, 2026-11-24): a tumour with CONIPHER mutations but no segments stops `stage`; there is deliberately no skip option.
 - TODO (tx_data): give the manual QC mock the real file's full column set.
 - `check` stops when `[pgdd].src` is a PGDD without the bootstrap/stability arguments (e.g. the wlippa
   fork at 1af16a8); use amf71/ParallelGDDetect at cb0437b or later.

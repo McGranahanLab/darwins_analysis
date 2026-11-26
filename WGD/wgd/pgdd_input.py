@@ -29,7 +29,7 @@ Differences from the R script:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -200,20 +200,27 @@ def _preflight_tumour(files: TumourFiles) -> None:
                                "; ".join(f"{k}: {v}" for k, v in missing.items()))
 
 
+def tumour_problems(conipher_dir: Path, msai_dir: Path, tumours: list[str]) -> dict[str, str]:
+    """{tumour: problem} for every tumour whose inputs fail the pre-flight checks."""
+    problems = {}
+    for t in tumours:
+        try:
+            _preflight_tumour(TumourFiles.locate(conipher_dir, msai_dir, t))
+        except TumourInputError as e:
+            problems[t] = str(e)
+    return problems
+
+
 def preflight(conipher_dir: Path, msai_dir: Path, tumours: list[str]) -> None:
     """Check every tumour before any processing; raise InputError listing all problems.
 
     Checked: files present and non-empty, required columns, a readable default tree,
     and identical SAMPLE sets in SCoutput, treeTable and the CN segments.
     """
-    problems = []
-    for t in tumours:
-        try:
-            _preflight_tumour(TumourFiles.locate(conipher_dir, msai_dir, t))
-        except TumourInputError as e:
-            problems.append(f"  {t}: {e}")
+    problems = tumour_problems(conipher_dir, msai_dir, tumours)
     if problems:
-        raise InputError(f"input problems in {len(problems)} tumour(s):\n" + "\n".join(problems))
+        raise InputError(f"input problems in {len(problems)} tumour(s):\n"
+                         + "\n".join(f"  {t}: {p}" for t, p in problems.items()))
 
 
 # ---- per tumour --------------------------------------------------------------
@@ -309,6 +316,7 @@ def prepare_tumour(files: TumourFiles, remove_nontree_clusters: bool = True
 class PrepareResult:
     table: pl.DataFrame                 # PGDD input (tumours with a tree)
     single_clone: pl.DataFrame          # per-sample rows of single-clone tumours (not run through PGDD)
+    failed: dict[str, str] = field(default_factory=dict)   # skip_failed: tumour directory -> reason
 
 
 # Quality codes (`quality_code`, ";"-joined) explain a quality below High.
@@ -361,10 +369,12 @@ def canonical_tumour_id(col: str = "tumour_id") -> pl.Expr:
 
 
 def prepare_all(conipher_dir: Path, msai_dir: Path, tumours: list[str] | None = None,
-                remove_nontree_clusters: bool = True, log=print) -> PrepareResult:
+                remove_nontree_clusters: bool = True, log=print, skip_failed: bool = False) -> PrepareResult:
     """PGDD input for every tumour directory under `conipher_dir` (or the `tumours` subset).
 
-    Runs `preflight` first: any input problem stops the run before processing.
+    Runs `preflight` first: any input problem stops the run before processing. With `skip_failed`
+    (WGD_pipeline, Piotr 2026-11-26) a tumour with a problem is left out instead and listed in
+    `PrepareResult.failed` (tumour directory -> reason).
     """
     dirs = sorted(p.name for p in Path(conipher_dir).iterdir() if p.is_dir())
     if not dirs:
@@ -375,14 +385,26 @@ def prepare_all(conipher_dir: Path, msai_dir: Path, tumours: list[str] | None = 
             raise InputError(f"selected tumours not found in {conipher_dir}: {', '.join(missing)}")
         dirs = [d for d in dirs if d in set(tumours)]
 
-    preflight(conipher_dir, msai_dir, dirs)
+    failed: dict[str, str] = {}
+    if skip_failed:
+        failed = tumour_problems(conipher_dir, msai_dir, dirs)
+        for t, p in failed.items():
+            log(f"[{t}] skipped: {p}")
+    else:
+        preflight(conipher_dir, msai_dir, dirs)
 
     tables, single = [], []
     for t in dirs:
+        if t in failed:
+            continue
         try:
             df, sc = prepare_tumour(TumourFiles.locate(conipher_dir, msai_dir, t), remove_nontree_clusters)
         except TumourInputError as e:
-            raise InputError(f"{t}: {e}") from e
+            if not skip_failed:
+                raise InputError(f"{t}: {e}") from e
+            failed[t] = str(e)
+            log(f"[{t}] skipped: {e}")
+            continue
         if sc is not None:
             log(f"[{t}] single clone: samples={sc.height} num_gds={sorted(set(sc['num_gds']))} (not sent to PGDD)")
             single.append(sc)
@@ -394,4 +416,4 @@ def prepare_all(conipher_dir: Path, msai_dir: Path, tumours: list[str] | None = 
              if tables else pl.DataFrame(schema={c: pl.Utf8 for c in OUTPUT_COLS}))
     single_clone = (pl.concat(single, how="vertical_relaxed").with_columns(canonical_tumour_id())
                     if single else pl.DataFrame(schema=SINGLE_CLONE_SCHEMA))
-    return PrepareResult(table, single_clone)
+    return PrepareResult(table, single_clone, failed)
